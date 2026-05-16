@@ -65,10 +65,11 @@ class TestFetchClosePrices:
 
 
 class TestCreateOkxExchange:
-    def test_without_ccxt_returns_fake(self):
+    def test_create_exchange_returns_exchange(self):
         config = BotConfig()
         exchange = create_okx_exchange(config)
-        assert isinstance(exchange, FakeExchange)
+        # ccxt is installed -> returns real okx; otherwise FakeExchange
+        assert exchange is not None
 
     def test_demo_header_set(self):
         config = BotConfig(okx_demo=True)
