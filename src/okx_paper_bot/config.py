@@ -1,7 +1,8 @@
+"""Bot configuration - all parameters from .env or CLI overrides."""
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -10,10 +11,10 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class BotConfig:
     symbol: str = "BTC/USDT"
-    symbols: tuple[str, ...] = ()  # 多交易对，空则用 symbol
+    symbols: tuple[str, ...] = ()
     timeframe: str = "1m"
     okx_demo: bool = True
-    strategy_name: str = "ma_crossover"  # ma_crossover / rsi / bollinger
+    strategy_name: str = "ma_crossover"
     fast_window: int = 5
     slow_window: int = 20
     rsi_period: int = 14
@@ -24,8 +25,8 @@ class BotConfig:
     initial_balance_usdt: float = 1_000.0
     order_usdt: float = 100.0
     max_position_fraction: float = 0.25
-    fee_pct: float = 0.001        # 0.1% 手续费
-    slippage_pct: float = 0.0005  # 0.05% 滑点
+    fee_pct: float = 0.001
+    slippage_pct: float = 0.0005
     db_path: Path = Path("data/trades.sqlite3")
     api_key: str | None = None
     secret: str | None = None
@@ -33,20 +34,23 @@ class BotConfig:
     stop_loss_pct: float = 0.05
     take_profit_pct: float = 0.10
     trailing_stop_pct: float = 0.0
+    # 部分止盈
+    tp1_pct: float = 0.0       # 第一档止盈触发点 (0.05 = 5%)
+    tp1_fraction: float = 0.5  # 第一档平仓比例 (0.5 = 平一半)
+    tp2_pct: float = 0.0       # 第二档止盈触发点
+    tp2_fraction: float = 1.0  # 第二档平仓比例 (1.0 = 全平)
     notify_file: Path = Path("data/notifications.log")
     loop_interval_seconds: int = 60
 
     @property
     def all_symbols(self) -> list[str]:
-        if self.symbols:
-            return list(self.symbols)
-        return [self.symbol]
+        return list(self.symbols) if self.symbols else [self.symbol]
 
     @classmethod
     def from_env(cls) -> "BotConfig":
         load_dotenv()
-        raw_symbols = os.getenv("OKX_SYMBOLS", "")
-        symbols = tuple(s.strip() for s in raw_symbols.split(",") if s.strip()) if raw_symbols else ()
+        raw = os.getenv("OKX_SYMBOLS", "")
+        symbols = tuple(s.strip() for s in raw.split(",") if s.strip()) if raw else ()
         return cls(
             symbol=os.getenv("OKX_SYMBOL", cls.symbol),
             symbols=symbols,
@@ -72,6 +76,10 @@ class BotConfig:
             stop_loss_pct=float(os.getenv("STOP_LOSS_PCT", cls.stop_loss_pct)),
             take_profit_pct=float(os.getenv("TAKE_PROFIT_PCT", cls.take_profit_pct)),
             trailing_stop_pct=float(os.getenv("TRAILING_STOP_PCT", cls.trailing_stop_pct)),
+            tp1_pct=float(os.getenv("TP1_PCT", cls.tp1_pct)),
+            tp1_fraction=float(os.getenv("TP1_FRACTION", cls.tp1_fraction)),
+            tp2_pct=float(os.getenv("TP2_PCT", cls.tp2_pct)),
+            tp2_fraction=float(os.getenv("TP2_FRACTION", cls.tp2_fraction)),
             notify_file=Path(os.getenv("NOTIFY_FILE", str(cls.notify_file))),
             loop_interval_seconds=int(os.getenv("LOOP_INTERVAL_SECONDS", cls.loop_interval_seconds)),
         )

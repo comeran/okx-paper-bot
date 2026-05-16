@@ -1,3 +1,4 @@
+"""交易机器人 - 多交易对 + 多策略 + 止损止盈 + 部分止盈 + 通知。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,6 +22,8 @@ class TradingBot:
         self._queue_file = Path("data/notify_queue.jsonl")
         self._entry_prices: dict[str, float] = {}
         self._highest_prices: dict[str, float] = {}
+        # 部分止盈状态: {symbol: {"tp1_done": False, "tp2_done": False}}
+        self._partial_tp_state: dict[str, dict] = {}
 
     def _get_signal(self, closes: list[float]) -> str:
         cfg = self.config
@@ -29,6 +32,52 @@ class TradingBot:
                           period=cfg.rsi_period, buy_threshold=cfg.rsi_buy,
                           sell_threshold=cfg.rsi_sell,
                           num_std=cfg.bollinger_std)
+
+    def _check_partial_take_profit(self, symbol: str, price: float) -> list[dict]:
+        """检查部分止盈。
+
+        tp1_pct: 盈利 X% 时平仓 tp1_fraction 的仓位
+        tp2_pct: 盈利 Y% 时平仓剩余仓位
+        """
+        cfg = self.config
+        if cfg.tp1_pct <= 0 or symbol not in self._entry_prices:
+            return []
+
+        state = self._partial_tp_state.setdefault(symbol, {"tp1_done": False, "tp2_done": False})
+        entry = self._entry_prices[symbol]
+        pnl_pct = (price - entry) / entry
+
+        orders = []
+
+        # 第一档止盈
+        if not state["tp1_done"] and pnl_pct >= cfg.tp1_pct:
+            fraction = cfg.tp1_fraction
+            close_orders = self.account.close_partial(symbol, fraction, price)
+            for o in close_orders:
+                if o["status"] == "closed":
+                    self.store.record_trade(symbol, "sell", amount=o["amount"], price=o["price"], order_id=o["id"])
+                    reason = f"部分止盈1 ({cfg.tp1_pct*100:.0f}%), 平仓{fraction*100:.0f}%"
+                    msg = format_trade_signal(symbol, "partial_tp", price, o["amount"], "closed",
+                                              self.account.balance_usdt, self.account.positions, reason=reason)
+                    notify(msg, self.notify_file, self._queue_file)
+            orders.extend(close_orders)
+            state["tp1_done"] = True
+
+        # 第二档止盈
+        if cfg.tp2_pct > 0 and not state["tp2_done"] and pnl_pct >= cfg.tp2_pct:
+            fraction = cfg.tp2_fraction
+            close_orders = self.account.close_partial(symbol, fraction, price)
+            for o in close_orders:
+                if o["status"] == "closed":
+                    self.store.record_trade(symbol, "sell", amount=o["amount"], price=o["price"], order_id=o["id"])
+                    reason = f"部分止盈2 ({cfg.tp2_pct*100:.0f}%), 平仓{fraction*100:.0f}%"
+                    msg = format_trade_signal(symbol, "partial_tp", price, o["amount"], "closed",
+                                              self.account.balance_usdt, self.account.positions, reason=reason)
+                    notify(msg, self.notify_file, self._queue_file)
+            orders.extend(close_orders)
+            state["tp2_done"] = True
+
+        return orders
 
     def on_prices(self, closes: list[float], symbol: str | None = None) -> dict:
         price = closes[-1]
@@ -43,8 +92,19 @@ class TradingBot:
                                           self.account.balance_usdt, self.account.positions)
                 notify(msg, self.notify_file, self._queue_file)
 
-        # 2. 止损止盈
-        held = self.account.positions.get(sym, 0.0)
+        # 2. 部分止盈检查（优先于止损/全仓止盈）
+        held = self.account.total_held(sym)
+        if held > 0 and sym in self._entry_prices:
+            partial_orders = self._check_partial_take_profit(sym, price)
+            if partial_orders:
+                held = self.account.total_held(sym)
+                if held <= 1e-12:
+                    self._entry_prices.pop(sym, None)
+                    self._highest_prices.pop(sym, None)
+                    self._partial_tp_state.pop(sym, None)
+                    return {"signal": "partial_tp", "order": partial_orders}
+
+        # 3. 止损/全仓止盈
         if held > 0 and sym in self._entry_prices:
             if price > self._highest_prices.get(sym, 0):
                 self._highest_prices[sym] = price
@@ -64,10 +124,11 @@ class TradingBot:
                     notify(msg, self.notify_file, self._queue_file)
                     self._entry_prices.pop(sym, None)
                     self._highest_prices.pop(sym, None)
+                    self._partial_tp_state.pop(sym, None)
                     return {"signal": trigger, "order": order, "reason": reason}
                 return {"signal": trigger, "order": order}
 
-        # 3. 策略信号
+        # 4. 策略信号
         signal = self._get_signal(closes)
         if signal == "hold":
             return {"signal": "hold", "order": None}
@@ -77,7 +138,7 @@ class TradingBot:
                                 RiskConfig(order_usdt=self.config.order_usdt,
                                            max_position_fraction=self.config.max_position_fraction))
         else:
-            amount = self.account.positions.get(sym, 0.0)
+            amount = self.account.total_held(sym)
 
         order = self.account.execute_market_order(sym, signal, amount, price)
         if order["status"] == "closed":
@@ -85,9 +146,11 @@ class TradingBot:
             if signal == "buy":
                 self._entry_prices[sym] = price
                 self._highest_prices[sym] = price
+                self._partial_tp_state.pop(sym, None)
             elif signal == "sell":
                 self._entry_prices.pop(sym, None)
                 self._highest_prices.pop(sym, None)
+                self._partial_tp_state.pop(sym, None)
             msg = format_trade_signal(sym, signal, price, order["amount"], "closed",
                                       self.account.balance_usdt, self.account.positions)
             notify(msg, self.notify_file, self._queue_file)

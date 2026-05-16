@@ -1,5 +1,4 @@
 """Tests for exchange."""
-import pytest
 from okx_paper_bot.exchange import FakeExchange, retry_call, create_okx_exchange, fetch_close_prices
 from okx_paper_bot.config import BotConfig
 

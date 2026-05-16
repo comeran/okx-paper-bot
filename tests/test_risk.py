@@ -12,7 +12,7 @@ class TestSizeOrder:
     def test_zero(self): assert size_order(0.0, 0.0, RiskConfig()) == 0.0
 
 class TestStopLossConfig:
-    def test_defaults(self): c = StopLossConfig(); assert c.stop_loss_pct == 0.05
+    def test_defaults(self): assert StopLossConfig().stop_loss_pct == 0.05
 
 class TestCheckStopLoss:
     def test_sl(self): assert check_stop_loss(100.0, 94.0, 100.0, StopLossConfig(stop_loss_pct=0.05)) == "stop_loss"
