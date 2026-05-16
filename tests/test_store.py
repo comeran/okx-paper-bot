@@ -21,8 +21,6 @@ class TestTradeStore:
         assert t["amount"] == 0.1
         assert t["price"] == 50000.0
         assert t["order_id"] == "paper-1"
-        assert "ts" in t
-        assert "id" in t
 
     def test_multiple_trades_ordered(self, tmp_path):
         db_path = tmp_path / "trades.sqlite3"

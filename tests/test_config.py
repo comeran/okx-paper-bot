@@ -32,34 +32,48 @@ class TestBotConfig:
         assert cfg.initial_balance_usdt == 1000.0
         assert cfg.order_usdt == 100.0
         assert cfg.max_position_fraction == 0.25
+        assert cfg.stop_loss_pct == 0.05
+        assert cfg.take_profit_pct == 0.10
+        assert cfg.trailing_stop_pct == 0.0
+        assert cfg.loop_interval_seconds == 60
 
     def test_frozen(self):
         cfg = BotConfig()
         with pytest.raises(AttributeError):
             cfg.symbol = "ETH/USDT"
 
-    def test_from_env_uses_defaults(self, monkeypatch):
-        for key in ["OKX_SYMBOL", "OKX_TIMEFRAME", "OKX_DEMO", "FAST_WINDOW",
-                     "SLOW_WINDOW", "INITIAL_BALANCE_USDT", "ORDER_USDT",
-                     "MAX_POSITION_FRACTION", "DB_PATH", "OKX_API_KEY",
-                     "OKX_API_SECRET", "OKX_API_PASSWORD"]:
-            monkeypatch.delenv(key, raising=False)
+    def test_from_env_loads_env_vars(self, monkeypatch):
+        """from_env reads from environment / .env file."""
+        monkeypatch.setenv("OKX_SYMBOL", "ETH/USDT")
+        monkeypatch.setenv("STOP_LOSS_PCT", "0.03")
         cfg = BotConfig.from_env()
-        assert cfg.symbol == "BTC/USDT"
-        assert cfg.api_key is None
+        assert cfg.symbol == "ETH/USDT"
+        assert cfg.stop_loss_pct == 0.03
 
     def test_from_env_custom(self, monkeypatch):
-        monkeypatch.setenv("OKX_SYMBOL", "ETH/USDT")
+        monkeypatch.setenv("OKX_SYMBOL", "SOL/USDT")
         monkeypatch.setenv("FAST_WINDOW", "10")
         monkeypatch.setenv("SLOW_WINDOW", "30")
         monkeypatch.setenv("INITIAL_BALANCE_USDT", "5000")
+        monkeypatch.setenv("STOP_LOSS_PCT", "0.03")
+        monkeypatch.setenv("TAKE_PROFIT_PCT", "0.15")
         cfg = BotConfig.from_env()
-        assert cfg.symbol == "ETH/USDT"
+        assert cfg.symbol == "SOL/USDT"
         assert cfg.fast_window == 10
         assert cfg.slow_window == 30
         assert cfg.initial_balance_usdt == 5000.0
+        assert cfg.stop_loss_pct == 0.03
+        assert cfg.take_profit_pct == 0.15
 
     def test_from_env_demo_flag(self, monkeypatch):
         monkeypatch.setenv("OKX_DEMO", "false")
         cfg = BotConfig.from_env()
         assert cfg.okx_demo is False
+
+    def test_new_sl_tp_defaults_in_config(self):
+        """新增的止损止盈字段有正确默认值。"""
+        cfg = BotConfig()
+        assert cfg.stop_loss_pct == 0.05
+        assert cfg.take_profit_pct == 0.10
+        assert cfg.trailing_stop_pct == 0.0
+        assert cfg.loop_interval_seconds == 60

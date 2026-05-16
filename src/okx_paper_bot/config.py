@@ -21,6 +21,14 @@ class BotConfig:
     api_key: str | None = None
     secret: str | None = None
     password: str | None = None
+    # 止损止盈
+    stop_loss_pct: float = 0.05
+    take_profit_pct: float = 0.10
+    trailing_stop_pct: float = 0.0
+    # 通知
+    notify_file: Path = Path("data/notifications.log")
+    # 持续运行
+    loop_interval_seconds: int = 60
 
     @classmethod
     def from_env(cls) -> "BotConfig":
@@ -38,6 +46,11 @@ class BotConfig:
             api_key=os.getenv("OKX_API_KEY"),
             secret=os.getenv("OKX_API_SECRET"),
             password=os.getenv("OKX_API_PASSWORD"),
+            stop_loss_pct=float(os.getenv("STOP_LOSS_PCT", cls.stop_loss_pct)),
+            take_profit_pct=float(os.getenv("TAKE_PROFIT_PCT", cls.take_profit_pct)),
+            trailing_stop_pct=float(os.getenv("TRAILING_STOP_PCT", cls.trailing_stop_pct)),
+            notify_file=Path(os.getenv("NOTIFY_FILE", str(cls.notify_file))),
+            loop_interval_seconds=int(os.getenv("LOOP_INTERVAL_SECONDS", cls.loop_interval_seconds)),
         )
 
 
@@ -45,4 +58,3 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-

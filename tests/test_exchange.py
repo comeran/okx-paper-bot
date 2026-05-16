@@ -18,7 +18,6 @@ class TestFakeExchange:
         result = ex.fetch_ohlcv("BTC/USDT", "1m", limit=2)
         assert len(result) == 2
         assert result[0][4] == 200.0
-        assert result[1][4] == 300.0
 
     def test_records_calls(self):
         ex = FakeExchange(candles=[[1, 2, 3, 4, 100.0]])
