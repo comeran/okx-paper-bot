@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 
 BJT = timezone(timedelta(hours=8))
+
+QUEUE_FILE = Path(os.getenv("NOTIFY_QUEUE_FILE", "data/notify_queue.jsonl"))
 
 
 def _now_bjt() -> str:
@@ -22,7 +25,6 @@ def format_trade_signal(
     positions: dict,
     reason: str = "",
 ) -> str:
-    """格式化交易信号通知消息。"""
     emoji = {"buy": "🟢", "sell": "🔴", "stop_loss": "🛑", "take_profit": "🎯", "trailing_stop": "📉"}.get(signal, "📊")
     lines = [
         f"{emoji} {signal.upper()} {symbol}",
@@ -49,13 +51,22 @@ def format_status(symbol: str, price: float, balance: float, positions: dict, si
     return f"📊 {symbol} = {price:.2f} | {signal.upper()} | 余额 {balance:.2f} | {pos_str}"
 
 
-def notify(message: str, notify_file: Path | str | None = None) -> None:
-    """写入通知到文件（可被外部工具读取转发）。"""
+def notify(message: str, notify_file: Path | str | None = None, queue_file: Path | str | None = None) -> None:
+    """写入通知到文件 + 队列（供 cron 转发到微信）。"""
+    # 写入日志文件
     if notify_file:
         path = Path(notify_file)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(message + "\n---\n")
+
+    # 写入队列文件（JSON lines，供 cron 读取转发）
+    qf = Path(queue_file) if queue_file else QUEUE_FILE
+    qf.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"ts": _now_bjt(), "msg": message}
+    with open(qf, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
     # 始终打印到 stdout
     print(message)
     print("---")

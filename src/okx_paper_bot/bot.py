@@ -28,6 +28,7 @@ class TradingBot:
         self.account = account
         self.store = store
         self.notify_file = notify_file or config.notify_file
+        self._queue_file = Path("data/notify_queue.jsonl")
         # 跟踪入场价和最高价（用于止损止盈）
         self._entry_prices: dict[str, float] = {}
         self._highest_prices: dict[str, float] = {}
@@ -61,7 +62,7 @@ class TradingBot:
                     pnl = (price - self._entry_prices[symbol]) * held
                     reason = f"{trigger} 触发, 盈亏: {pnl:+.2f} USDT"
                     msg = format_trade_signal(symbol, trigger, price, order["amount"], "closed", self.account.balance_usdt, self.account.positions, reason=reason)
-                    notify(msg, self.notify_file)
+                    notify(msg, self.notify_file, self._queue_file)
                     # 清理跟踪
                     self._entry_prices.pop(symbol, None)
                     self._highest_prices.pop(symbol, None)
@@ -99,7 +100,7 @@ class TradingBot:
                 self._highest_prices.pop(symbol, None)
             # 通知
             msg = format_trade_signal(symbol, signal, price, order["amount"], "closed", self.account.balance_usdt, self.account.positions)
-            notify(msg, self.notify_file)
+            notify(msg, self.notify_file, self._queue_file)
 
         return {"signal": signal, "order": order}
 
@@ -113,7 +114,7 @@ class TradingBot:
             )
         except Exception as exc:
             msg = format_error(self.config.symbol, str(exc))
-            notify(msg, self.notify_file)
+            notify(msg, self.notify_file, self._queue_file)
             return {"signal": "error", "order": None, "error": str(exc)}
         return self.on_prices(closes)
 
