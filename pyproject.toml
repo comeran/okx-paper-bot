@@ -1,0 +1,16 @@
+[project]
+name = "okx-paper-bot"
+version = "0.1.0"
+description = "OKX demo trading quant bot for practice"
+requires-python = ">=3.11"
+dependencies = [
+    "ccxt>=4.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+okx-paper-bot = "okx_paper_bot.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
