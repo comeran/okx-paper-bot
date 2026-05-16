@@ -39,7 +39,7 @@ def _handle_signal(signum, frame):
 
 
 def run_loop(config: BotConfig | None = None) -> None:
-    """持续运行交易机器人。"""
+    """持续运行交易机器人（支持多交易对）。"""
     if config is None:
         config = BotConfig.from_env()
 
@@ -56,42 +56,45 @@ def run_loop(config: BotConfig | None = None) -> None:
 
     interval = _sleep_seconds(config.timeframe, config.loop_interval_seconds)
     limit = max(config.slow_window + 1, 22)
+    symbols = config.all_symbols
 
     start_msg = (
         f"🚀 交易机器人启动\n"
-        f"交易对: {config.symbol}\n"
+        f"交易对: {', '.join(symbols)}\n"
+        f"策略: {config.strategy_name}\n"
         f"时间框架: {config.timeframe}\n"
         f"检查间隔: {interval}s\n"
         f"止损: {config.stop_loss_pct*100:.1f}% | 止盈: {config.take_profit_pct*100:.1f}%\n"
-        f"移动止损: {config.trailing_stop_pct*100:.1f}%\n"
         f"初始余额: {config.initial_balance_usdt:.2f} USDT\n"
         f"Demo: {config.okx_demo}"
     )
     notify(start_msg, bot.notify_file)
 
     cycle = 0
-    last_price = 0.0
+    last_prices: dict[str, float] = {}
     try:
         while True:
             cycle += 1
             now = datetime.now(BJT).strftime("%H:%M:%S")
             try:
-                closes = fetch_close_prices(exchange, symbol=config.symbol, timeframe=config.timeframe, limit=limit)
-                last_price = closes[-1]
-                result = bot.on_prices(closes)
-                sig = result["signal"]
+                for sym in symbols:
+                    closes = fetch_close_prices(exchange, symbol=sym, timeframe=config.timeframe, limit=limit)
+                    last_prices[sym] = closes[-1]
+                    result = bot.on_prices(closes, symbol=sym)
+                    sig = result["signal"]
 
+                    if sig == "hold" and cycle % 10 == 0:
+                        status_msg = format_status(sym, closes[-1], account.balance_usdt, account.positions, sig)
+                        print(f"[{now}] {status_msg}")
+
+                # 记录权益快照
                 stats = PortfolioStats(
                     initial_balance=config.initial_balance_usdt,
                     current_balance=account.balance_usdt,
                     positions=dict(account.positions),
-                    current_prices={config.symbol: last_price},
+                    current_prices=last_prices,
                 )
                 tracker.record(stats.snapshot())
-
-                if sig == "hold" and cycle % 10 == 0:
-                    status_msg = format_status(config.symbol, last_price, account.balance_usdt, account.positions, sig)
-                    print(f"[{now}] {status_msg}")
 
             except GracefulExit:
                 raise
@@ -105,7 +108,8 @@ def run_loop(config: BotConfig | None = None) -> None:
     finally:
         total = account.balance_usdt
         for sym, qty in account.positions.items():
-            total += qty * (last_price if last_price > 0 else 0)
+            price = last_prices.get(sym, 0)
+            total += qty * price
         exit_msg = (
             f"🛑 交易机器人停止\n"
             f"运行周期: {cycle}\n"
