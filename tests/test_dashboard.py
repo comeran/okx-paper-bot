@@ -381,6 +381,70 @@ class TestApiBacktest:
         assert data["equity_curve"][2] == pytest.approx(1001.0)
 
 
+class TestApiGrid:
+
+    def test_missing_grid_state_returns_disabled_demo(self, config, monkeypatch, tmp_dir):
+        from okx_paper_bot.dashboard import _build_api_grid
+        monkeypatch.setenv("GRID_STATE_FILE", str(tmp_dir / "missing_grid_state.json"))
+        result = _build_api_grid(config)
+        assert result["enabled"] is False
+        assert result["symbol"] == "BTC/USDT"
+        assert result["grid_count"] == 10
+        assert result["grid_step"] == 2000.0
+        assert len(result["levels"]) == 11
+        assert result["bought_pending"] == 0
+        assert result["available"] == 11
+
+    def test_grid_state_file(self, config, monkeypatch, tmp_dir):
+        from okx_paper_bot.dashboard import _build_api_grid
+        grid_file = tmp_dir / "grid_state.json"
+        grid_file.write_text(json.dumps({
+            "config": {"symbol": "ETH/USDT", "lower_price": 2000, "upper_price": 3000, "grid_count": 5, "order_usdt": 100},
+            "levels": [
+                {"price": 2000, "buy_filled": False, "sell_filled": False},
+                {"price": 2200, "buy_filled": True, "sell_filled": False},
+                {"price": 2400, "buy_filled": True, "sell_filled": True},
+            ],
+            "total_profit": 12.34,
+            "completed_grids": 1,
+        }))
+        monkeypatch.setenv("GRID_STATE_FILE", str(grid_file))
+        result = _build_api_grid(config)
+        assert result["enabled"] is True
+        assert result["symbol"] == "ETH/USDT"
+        assert result["grid_step"] == 200.0
+        assert result["total_profit"] == pytest.approx(12.34)
+        assert result["completed_grids"] == 1
+        assert result["bought_pending"] == 1
+        assert result["available"] == 1
+
+
+class TestApiControl:
+
+    def test_invalid_action(self):
+        from okx_paper_bot.dashboard import _build_api_control
+        result = _build_api_control("boom")
+        assert "error" in result
+
+    def test_control_uses_systemctl_when_available(self, monkeypatch):
+        from okx_paper_bot import dashboard
+        monkeypatch.setattr(dashboard, "_systemctl_bot", lambda action: True)
+        monkeypatch.setattr(dashboard, "_find_bot_pids", lambda: [])
+        result = dashboard._build_api_control("restart")
+        assert result == {"status": "ok", "action": "restart", "method": "systemctl"}
+
+    def test_control_fallback_sends_sigterm(self, monkeypatch):
+        from okx_paper_bot import dashboard
+        killed = []
+        monkeypatch.setattr(dashboard, "_systemctl_bot", lambda action: False)
+        monkeypatch.setattr(dashboard, "_find_bot_pids", lambda: [123, 456])
+        monkeypatch.setattr(dashboard.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+        result = dashboard._build_api_control("stop")
+        assert result["status"] == "ok"
+        assert result["method"] == "sigterm"
+        assert [pid for pid, _sig in killed] == [123, 456]
+
+
 # ── HTTP integration tests ───────────────────────────────────────────────
 
 class TestDashboardHTTP:
@@ -401,6 +465,7 @@ class TestDashboardHTTP:
         monkeypatch.setenv("TAKE_PROFIT_PCT", str(config.take_profit_pct))
         monkeypatch.setenv("ORDER_USDT", str(config.order_usdt))
         monkeypatch.setenv("EQUITY_HISTORY_FILE", str(tmp_dir / "equity_history.json"))
+        monkeypatch.setenv("GRID_STATE_FILE", str(tmp_dir / "grid_state.json"))
 
         from okx_paper_bot.dashboard import DashboardHandler, run_dashboard
         import socket
@@ -456,6 +521,14 @@ class TestDashboardHTTP:
         data = json.loads(resp.read())
         assert "api_key" not in data
         assert "strategy" in data
+
+    def test_get_grid(self, server_url):
+        import urllib.request
+        resp = urllib.request.urlopen(f"{server_url}/api/grid")
+        data = json.loads(resp.read())
+        assert resp.status == 200
+        assert "levels" in data
+        assert "enabled" in data
 
     def test_homepage_still_works(self, server_url):
         import urllib.request

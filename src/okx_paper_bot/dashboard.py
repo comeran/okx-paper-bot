@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import signal
+import subprocess
 import time
 from string import Template
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -108,6 +110,20 @@ CSS = """
     table { font-size: 12px; }
     th, td { padding: 6px 8px; }
   }
+
+  /* Grid visualization */
+  .grid-viz { position: relative; padding: 12px 0; }
+  .grid-row { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .grid-row:last-child { border-bottom: none; }
+  .grid-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+  .grid-dot.available { background: var(--green); }
+  .grid-dot.bought { background: var(--yellow); }
+  .grid-dot.completed { background: var(--muted); }
+  .grid-price { font-weight: 600; min-width: 100px; }
+  .grid-label { font-size: 12px; color: var(--muted); min-width: 80px; }
+  .grid-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .grid-unavailable { text-align: center; padding: 40px 20px; color: var(--muted); }
+  .grid-unavailable .icon { font-size: 48px; margin-bottom: 12px; }
 """
 
 HTML_TEMPLATE = Template("""<!DOCTYPE html>
@@ -220,7 +236,7 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
 <div class="section" id="grid">
   <div class="section-title">🔲 网格策略</div>
   <div class="card">
-    <div id="gridArea"><p style="color:var(--muted)">网格策略状态将在可用时显示。</p></div>
+    <div id="gridArea"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
   </div>
 </div>
 
@@ -232,7 +248,8 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
   </div>
   <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn" onclick="location.reload()">🔄 刷新页面</button>
-    <button class="btn btn-danger" onclick="alert('停止功能需通过CLI操作')">⛔ 停止机器人</button>
+    <button class="btn" onclick="controlBot('restart')">🔄 重启机器人</button>
+    <button class="btn btn-danger" onclick="controlBot('stop')">⛔ 停止机器人</button>
   </div>
 </div>
 
@@ -420,6 +437,60 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
         });
       }
     }).catch(function(e) { btn.disabled = false; btn.textContent = '运行回测'; showError('回测请求失败: ' + e.message); });
+  };
+
+  // ── Grid Visualization ──
+  function loadGrid() {
+    fetch('/api/grid').then(function(r) {
+      if (!r.ok) throw new Error('not available');
+      return r.json();
+    }).then(function(d) {
+      if (!d.enabled) {
+        $('gridArea').innerHTML = '<div class="grid-unavailable"><div class="icon">🔲</div><div>网格策略未启用</div><div style="font-size:13px;margin-top:8px">启动网格策略后将显示实时状态</div></div>';
+        return;
+      }
+      var area = $('gridArea');
+      var boughtPending = 0, available = 0;
+      d.levels.forEach(function(l) {
+        if (l.buy_filled && !l.sell_filled) boughtPending++;
+        if (!l.buy_filled) available++;
+      });
+      // Stats row
+      var html = '<div class="grid-stats">' +
+        '<div class="metric"><div class="label">累计利润</div><div class="value green">' + fmt(d.total_profit) + ' USDT</div></div>' +
+        '<div class="metric"><div class="label">完成循环</div><div class="value">' + d.completed_grids + '</div></div>' +
+        '<div class="metric"><div class="label">买入待卖</div><div class="value yellow">' + boughtPending + '</div></div>' +
+        '<div class="metric"><div class="label">可买入</div><div class="value green">' + available + '</div></div>' +
+        '</div>';
+      // Grid info
+      html += '<div style="margin-bottom:12px;font-size:13px;color:var(--muted)">' + d.symbol + ' | 区间: ' + fmt(d.lower_price) + ' - ' + fmt(d.upper_price) + ' | 每格: ' + fmt(d.grid_step) + ' USDT | 每单: ' + d.order_usdt + ' USDT</div>';
+      // Grid levels (top = highest price)
+      var levels = d.levels.slice().reverse();
+      html += '<div class="grid-viz">';
+      levels.forEach(function(l) {
+        var cls, label;
+        if (l.buy_filled && l.sell_filled) { cls = 'completed'; label = '已完成'; }
+        else if (l.buy_filled && !l.sell_filled) { cls = 'bought'; label = '待卖出'; }
+        else { cls = 'available'; label = '可买入'; }
+        html += '<div class="grid-row"><div class="grid-dot ' + cls + '"></div><div class="grid-price">' + fmt(l.price) + '</div><div class="grid-label">' + label + '</div></div>';
+      });
+      html += '</div>';
+      area.innerHTML = html;
+    }).catch(function() {
+      $('gridArea').innerHTML = '<div class="grid-unavailable"><div class="icon">🔲</div><div>网格策略未启用</div><div style="font-size:13px;margin-top:8px">请在启动时启用网格策略以查看状态</div></div>';
+    });
+  }
+  loadGrid();
+
+  // ── Bot Control ──
+  window.controlBot = function(action) {
+    var labels = { restart: '重启', stop: '停止' };
+    if (!confirm('确定要' + labels[action] + '机器人吗？')) return;
+    fetch('/api/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: action }) })
+    .then(function(r) { return r.json(); }).then(function(d) {
+      if (d.error) { showError('操作失败: ' + d.error); }
+      else { showError(''); alert('机器人' + labels[action] + '指令已发送'); }
+    }).catch(function(e) { showError('控制请求失败: ' + e.message); });
   };
 })();
 </script>
@@ -677,6 +748,123 @@ def _get_equity_file(config: BotConfig) -> Path:
     return config.db_path.parent / "equity_history.json"
 
 
+def _get_grid_state_file(config: BotConfig) -> Path:
+    """Resolve grid state file path."""
+    env_path = os.getenv("GRID_STATE_FILE")
+    if env_path:
+        return Path(env_path)
+    return config.db_path.parent / "grid_state.json"
+
+
+def _normalize_grid_payload(data: dict, enabled: bool) -> dict:
+    """Normalize a serialized GridState-like dict for the dashboard API."""
+    cfg = data.get("config", {}) or {}
+    lower = float(cfg.get("lower_price", 70000))
+    upper = float(cfg.get("upper_price", 90000))
+    grid_count = int(cfg.get("grid_count", 10))
+    levels = [
+        {
+            "price": float(l["price"]),
+            "buy_filled": bool(l.get("buy_filled", False)),
+            "sell_filled": bool(l.get("sell_filled", False)),
+        }
+        for l in data.get("levels", [])
+    ]
+    bought_pending = sum(1 for l in levels if l["buy_filled"] and not l["sell_filled"])
+    available = sum(1 for l in levels if not l["buy_filled"])
+    return {
+        "enabled": enabled,
+        "symbol": cfg.get("symbol", "BTC/USDT"),
+        "lower_price": lower,
+        "upper_price": upper,
+        "grid_count": grid_count,
+        "grid_step": round((upper - lower) / grid_count, 2) if grid_count else 0.0,
+        "order_usdt": float(cfg.get("order_usdt", 500)),
+        "levels": levels,
+        "total_profit": float(data.get("total_profit", 0.0)),
+        "completed_grids": int(data.get("completed_grids", 0)),
+        "bought_pending": bought_pending,
+        "available": available,
+    }
+
+
+def _build_api_grid(config: BotConfig) -> dict:
+    """Grid strategy status: levels, profit, completion stats."""
+    from okx_paper_bot.grid import GridConfig
+
+    grid_file = _get_grid_state_file(config)
+    if not grid_file.exists():
+        gc = GridConfig()
+        demo = {
+            "config": {
+                "symbol": gc.symbol,
+                "lower_price": gc.lower_price,
+                "upper_price": gc.upper_price,
+                "grid_count": gc.grid_count,
+                "order_usdt": gc.order_usdt,
+            },
+            "levels": [
+                {"price": p, "buy_filled": False, "sell_filled": False}
+                for p in gc.grid_prices()
+            ],
+            "total_profit": 0.0,
+            "completed_grids": 0,
+        }
+        return _normalize_grid_payload(demo, enabled=False)
+
+    data = json.loads(grid_file.read_text())
+    return _normalize_grid_payload(data, enabled=True)
+
+
+def _find_bot_pids() -> list[int]:
+    """Find running bot worker PIDs, excluding the dashboard process."""
+    pids: list[int] = []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            cmd = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
+        except OSError:
+            continue
+        if "okx_paper_bot.cli" in cmd and " run" in cmd:
+            pids.append(int(proc.name))
+    return pids
+
+
+def _systemctl_bot(action: str) -> bool:
+    """Try systemd control first when dashboard runs inside the LXC."""
+    if action not in ("restart", "stop"):
+        return False
+    try:
+        result = subprocess.run(
+            ["systemctl", action, "okx-bot.service"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return False
+    return result.returncode == 0
+
+
+def _build_api_control(action: str) -> dict:
+    """Execute bot control action (restart/stop) safely from the dashboard."""
+    if action not in ("restart", "stop"):
+        return {"error": f"invalid action: {action}"}
+
+    if _systemctl_bot(action):
+        return {"status": "ok", "action": action, "method": "systemctl"}
+
+    pids = _find_bot_pids()
+    if not pids:
+        return {"error": "bot process not found"}
+
+    for pid in pids:
+        os.kill(pid, signal.SIGTERM)
+    return {"status": "ok", "action": action, "method": "sigterm", "pids": pids}
+
+
 # ── HTTP Handler ─────────────────────────────────────────────────────────
 
 
@@ -709,6 +897,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/config":
             self._json_response(_build_api_config(config))
+
+        elif path == "/api/grid":
+            self._json_response(_build_api_grid(config))
 
         else:
             self.send_response(200)
@@ -764,6 +955,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+        elif path == "/api/control":
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_len)
+            params = json.loads(body) if body else {}
+            action = params.get("action", "")
+            # Safety: only allow from localhost
+            client_addr = self.client_address[0]
+            if client_addr not in ("127.0.0.1", "::1"):
+                self._json_response({"error": "only localhost allowed"}, status=403)
+            else:
+                self._json_response(_build_api_control(action))
+
         else:
             self.send_response(404)
             self.send_header("Content-Type", "application/json")
