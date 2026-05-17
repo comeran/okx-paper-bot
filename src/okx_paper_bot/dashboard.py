@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from string import Template
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, parse_qs
@@ -19,45 +20,409 @@ from okx_paper_bot.backtest import BacktestResult
 BJT = timezone(timedelta(hours=8))
 
 CSS = """
-  body{font-family:-apple-system,sans-serif;background:#0d1117;color:#c9d1d9;margin:0;padding:20px}
-  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:12px 0}
-  .header{font-size:20px;font-weight:600;color:#58a6ff}
-  .metric{display:inline-block;margin:8px 16px 8px 0}
-  .metric .label{font-size:12px;color:#8b949e}
-  .metric .value{font-size:24px;font-weight:700}
-  .green{color:#3fb950}.red{color:#f85149}.yellow{color:#d29922}
-  table{width:100%;border-collapse:collapse;margin-top:8px}
-  th,td{text-align:left;padding:6px 12px;border-bottom:1px solid #21262d}
-  th{color:#8b949e;font-size:12px}
-  .pos{color:#3fb950}.neg{color:#f85149}
-  .refresh{color:#8b949e;font-size:12px}
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+  a { color: var(--accent); text-decoration: none; }
+
+  /* Nav */
+  .nav { position: sticky; top: 0; z-index: 100; background: var(--card); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0; padding: 0 16px; overflow-x: auto; }
+  .nav .brand { font-weight: 700; color: var(--accent); font-size: 16px; padding: 12px 16px 12px 0; white-space: nowrap; border-right: 1px solid var(--border); margin-right: 8px; }
+  .nav a { padding: 12px 14px; color: var(--muted); font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; transition: color .2s, border-color .2s; }
+  .nav a:hover, .nav a.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  /* Sections */
+  .section { padding: 20px 20px 8px; scroll-margin-top: 56px; }
+  .section-title { font-size: 18px; font-weight: 600; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+
+  /* Cards */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .metrics { display: flex; flex-wrap: wrap; gap: 12px; }
+  .metric { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; min-width: 140px; flex: 1; }
+  .metric .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .metric .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  tr:hover { background: rgba(88,166,255,.04); }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font-size: 14px; cursor: pointer; transition: border-color .2s, background .2s; }
+  .btn:hover { border-color: var(--accent); background: rgba(88,166,255,.08); }
+  .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-danger { background: #da3633; border-color: #f85149; color: #fff; }
+  .btn-danger:hover { background: #f85149; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Filters */
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .filters select, .filters input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text); font-size: 14px; }
+  .filters label { font-size: 13px; color: var(--muted); }
+
+  /* Chart containers */
+  .chart-container { position: relative; width: 100%; max-width: 800px; margin: 0 auto; }
+  .chart-container canvas { width: 100% !important; }
+
+  /* Colors */
+  .green { color: var(--green); } .red { color: var(--red); } .yellow { color: var(--yellow); }
+
+  /* Spinner */
+  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; padding: 20px; }
+
+  /* Error */
+  .error-msg { background: rgba(248,81,73,.1); border: 1px solid var(--red); border-radius: 6px; padding: 12px; color: var(--red); font-size: 14px; margin-bottom: 12px; display: none; }
+
+  /* Pagination */
+  .pagination { display: flex; align-items: center; gap: 8px; margin-top: 12px; justify-content: center; }
+  .pagination .btn { padding: 6px 12px; font-size: 13px; }
+  .pagination .info { font-size: 13px; color: var(--muted); }
+
+  /* Form */
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .form-grid label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .form-grid input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 14px; }
+
+  /* Config list */
+  .config-list { list-style: none; }
+  .config-list li { padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 14px; }
+  .config-list li span:first-child { color: var(--muted); }
+  .config-list li span:last-child { font-weight: 600; color: var(--text); }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .nav { font-size: 13px; }
+    .nav a { padding: 10px 10px; }
+    .metrics { flex-direction: column; }
+    .metric .value { font-size: 20px; }
+    .form-grid { grid-template-columns: 1fr; }
+    .section { padding: 12px; }
+    table { font-size: 12px; }
+    th, td { padding: 6px 8px; }
+  }
 """
 
 HTML_TEMPLATE = Template("""<!DOCTYPE html>
-<html><head>
+<html lang="zh"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OKX Paper Bot Dashboard</title>
 <style>$css</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head><body>
-<div class="card">
-  <div class="header">🤖 OKX Paper Bot</div>
-  <div class="refresh">自动刷新 30s | $time</div>
+
+<nav class="nav">
+  <span class="brand">🤖 OKX Bot</span>
+  <a href="#overview" class="active" data-nav>总览</a>
+  <a href="#equity" data-nav>权益</a>
+  <a href="#trades" data-nav>交易</a>
+  <a href="#stats" data-nav>统计</a>
+  <a href="#backtest" data-nav>回测</a>
+  <a href="#grid" data-nav>网格</a>
+  <a href="#settings" data-nav>设置</a>
+</nav>
+
+<div class="error-msg" id="errorBox"></div>
+
+<!-- Overview -->
+<div class="section" id="overview">
+  <div class="section-title">📊 账户总览</div>
+  <div class="metrics">
+    <div class="metric"><div class="label">余额 (USDT)</div><div class="value" id="vBalance">--</div></div>
+    <div class="metric"><div class="label">持仓价值</div><div class="value" id="vPosValue">--</div></div>
+    <div class="metric"><div class="label">账户总值</div><div class="value" id="vEquity">--</div></div>
+    <div class="metric"><div class="label">总收益</div><div class="value" id="vReturn">--</div></div>
+    <div class="metric"><div class="label">策略</div><div class="value" id="vStrategy" style="font-size:16px">--</div></div>
+    <div class="metric"><div class="label">交易数</div><div class="value" id="vTrades">--</div></div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="section-title">📦 持仓明细</div>
+    <div id="positionsArea"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
+  </div>
 </div>
-<div class="card">
-  <div class="metric"><div class="label">余额</div><div class="value">$balance</div></div>
-  <div class="metric"><div class="label">持仓价值</div><div class="value">$pos_value</div></div>
-  <div class="metric"><div class="label">账户总值</div><div class="value $total_class">$total</div></div>
-  <div class="metric"><div class="label">总收益</div><div class="value $ret_class">$return_pct</div></div>
+
+<!-- Equity -->
+<div class="section" id="equity">
+  <div class="section-title">📈 权益曲线</div>
+  <div class="card">
+    <div class="chart-container"><canvas id="equityChart"></canvas></div>
+    <div class="loading" id="equityLoading"><div class="spinner"></div> 加载中...</div>
+  </div>
+  <div class="metrics" style="margin-top:12px">
+    <div class="metric"><div class="label">Sharpe Ratio</div><div class="value" id="vSharpe">--</div></div>
+    <div class="metric"><div class="label">最大回撤</div><div class="value" id="vDrawdown">--</div></div>
+  </div>
 </div>
-<div class="card">
-  <div class="header">📦 持仓</div>
-  $positions_html
+
+<!-- Stats -->
+<div class="section" id="stats">
+  <div class="section-title">📉 交易统计</div>
+  <div class="metrics">
+    <div class="metric"><div class="label">总交易</div><div class="value" id="vTotalTrades">--</div></div>
+    <div class="metric"><div class="label">胜率</div><div class="value" id="vWinRate">--</div></div>
+    <div class="metric"><div class="label">盈亏比</div><div class="value" id="vPF">--</div></div>
+    <div class="metric"><div class="label">平均盈利</div><div class="value" id="vAvgWin">--</div></div>
+    <div class="metric"><div class="label">平均亏损</div><div class="value" id="vAvgLoss">--</div></div>
+    <div class="metric"><div class="label">总盈亏</div><div class="value" id="vTotalPnl">--</div></div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="chart-container" style="max-width:320px"><canvas id="statsChart"></canvas></div>
+  </div>
 </div>
-<div class="card">
-  <div class="header">📋 最近交易</div>
-  $trades_html
+
+<!-- Trades -->
+<div class="section" id="trades">
+  <div class="section-title">📋 交易记录</div>
+  <div class="card">
+    <div class="filters">
+      <label>交易对</label>
+      <select id="fSymbol"><option value="">全部</option></select>
+      <label>方向</label>
+      <select id="fSide"><option value="">全部</option><option value="buy">买入</option><option value="sell">卖出</option><option value="stop_loss">止损</option><option value="take_profit">止盈</option></select>
+      <button class="btn" onclick="fetchTrades(1)">筛选</button>
+    </div>
+    <div id="tradesTable"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
+    <div class="pagination" id="tradesPagination"></div>
+  </div>
 </div>
-<script>setTimeout(()=>location.reload(),30000)</script>
+
+<!-- Backtest -->
+<div class="section" id="backtest">
+  <div class="section-title">🧪 回测</div>
+  <div class="card">
+    <form id="btForm" onsubmit="runBacktest(event)">
+      <div class="form-grid">
+        <div><label>交易对</label><input id="btSymbol" value="$default_symbol"></div>
+        <div><label>时间框架</label><input id="btTF" value="$default_tf"></div>
+        <div><label>天数</label><input id="btDays" type="number" value="30"></div>
+        <div><label>快线</label><input id="btFast" type="number" value="$default_fast"></div>
+        <div><label>慢线</label><input id="btSlow" type="number" value="$default_slow"></div>
+      </div>
+      <div style="margin-top:12px"><button class="btn btn-primary" type="submit" id="btRun">运行回测</button></div>
+    </form>
+    <div id="btResult" style="margin-top:16px;display:none">
+      <div class="metrics" id="btMetrics"></div>
+      <div class="card" style="margin-top:12px">
+        <div class="chart-container"><canvas id="btChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Grid -->
+<div class="section" id="grid">
+  <div class="section-title">🔲 网格策略</div>
+  <div class="card">
+    <div id="gridArea"><p style="color:var(--muted)">网格策略状态将在可用时显示。</p></div>
+  </div>
+</div>
+
+<!-- Settings -->
+<div class="section" id="settings">
+  <div class="section-title">⚙️ 设置</div>
+  <div class="card">
+    <ul class="config-list" id="configList"><li><span>加载中...</span></li></ul>
+  </div>
+  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn" onclick="location.reload()">🔄 刷新页面</button>
+    <button class="btn btn-danger" onclick="alert('停止功能需通过CLI操作')">⛔ 停止机器人</button>
+  </div>
+</div>
+
+<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">
+  OKX Paper Trading Bot &mdash; SSE 实时更新 &mdash; <span id="sseStatus">连接中...</span>
+</div>
+
+<script>
+(function() {
+  let equityChartObj = null, statsChartObj = null, btChartObj = null;
+
+  // ── Helpers ──
+  function $(id) { return document.getElementById(id); }
+  function showError(msg) { var e = $('errorBox'); e.textContent = msg; e.style.display = 'block'; setTimeout(function() { e.style.display = 'none'; }, 8000); }
+  function fmt(n, d) { return n !== undefined && n !== null ? Number(n).toFixed(d !== undefined ? d : 2) : '--'; }
+  function cls(n) { return n >= 0 ? 'green' : 'red'; }
+
+  // ── Nav ──
+  document.querySelectorAll('[data-nav]').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+      document.querySelectorAll('[data-nav]').forEach(function(x) { x.classList.remove('active'); });
+      this.classList.add('active');
+    });
+  });
+
+  // ── SSE for real-time overview ──
+  var evtSrc = new EventSource('/api/stream');
+  evtSrc.onopen = function() { $('sseStatus').textContent = '已连接'; $('sseStatus').className = 'green'; };
+  evtSrc.onerror = function() { $('sseStatus').textContent = '已断开'; $('sseStatus').className = 'red'; };
+  evtSrc.onmessage = function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      $('vBalance').textContent = fmt(d.balance);
+      $('vPosValue').textContent = fmt(d.positions_value);
+      $('vEquity').textContent = fmt(d.total_equity);
+      $('vEquity').className = 'value ' + cls(d.total_equity - d.initial_balance);
+      $('vReturn').textContent = fmt(d.return_pct, 2) + '%';
+      $('vReturn').className = 'value ' + cls(d.return_pct);
+      $('vStrategy').textContent = d.strategy || '--';
+      $('vTrades').textContent = d.trades_count !== undefined ? d.trades_count : '--';
+      // Positions table
+      var area = $('positionsArea');
+      if (d.positions && d.positions.length > 0) {
+        var html = '<table><tr><th>交易对</th><th>数量</th><th>价格</th><th>价值</th></tr>';
+        d.positions.forEach(function(p) {
+          html += '<tr><td>' + p.symbol + '</td><td>' + fmt(p.amount, 6) + '</td><td>' + fmt(p.price) + '</td><td>' + fmt(p.value) + '</td></tr>';
+        });
+        html += '</table>';
+        area.innerHTML = html;
+      } else {
+        area.innerHTML = '<p style="color:var(--muted)">空仓</p>';
+      }
+    } catch(err) {}
+  };
+
+  // ── Equity Chart ──
+  function loadEquity() {
+    fetch('/api/equity').then(function(r) { return r.json(); }).then(function(d) {
+      $('equityLoading').style.display = 'none';
+      $('vSharpe').textContent = fmt(d.sharpe, 4);
+      $('vDrawdown').textContent = fmt(d.max_drawdown * 100, 2) + '%';
+      if (!d.history || d.history.length === 0) return;
+      var labels = d.history.map(function(h) { return h.timestamp; });
+      var data = d.history.map(function(h) { return h.total_equity; });
+      var ctx = $('equityChart').getContext('2d');
+      if (equityChartObj) equityChartObj.destroy();
+      equityChartObj = new Chart(ctx, {
+        type: 'line',
+        data: { labels: labels, datasets: [{ label: '权益 (USDT)', data: data, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 2 }] },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { display: true, ticks: { color: '#8b949e', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } } } }
+      });
+    }).catch(function(e) { $('equityLoading').textContent = '加载失败: ' + e.message; });
+  }
+  loadEquity();
+
+  // ── Stats + Pie Chart ──
+  function loadStats() {
+    fetch('/api/stats').then(function(r) { return r.json(); }).then(function(d) {
+      $('vTotalTrades').textContent = d.total_trades;
+      $('vWinRate').textContent = fmt(d.win_rate * 100, 1) + '%';
+      $('vPF').textContent = fmt(d.profit_factor);
+      $('vAvgWin').textContent = fmt(d.avg_win);
+      $('vAvgWin').className = 'value green';
+      $('vAvgLoss').textContent = fmt(d.avg_loss);
+      $('vAvgLoss').className = 'value red';
+      $('vTotalPnl').textContent = fmt(d.total_pnl);
+      $('vTotalPnl').className = 'value ' + cls(d.total_pnl);
+      // Pie chart
+      var ctx = $('statsChart').getContext('2d');
+      if (statsChartObj) statsChartObj.destroy();
+      statsChartObj = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels: ['盈利', '亏损'], datasets: [{ data: [d.winning_trades || 0, d.losing_trades || 0], backgroundColor: ['#3fb950', '#f85149'], borderWidth: 0 }] },
+        options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: '#c9d1d9' } } } }
+      });
+    }).catch(function(e) { showError('统计数据加载失败'); });
+  }
+  loadStats();
+
+  // ── Trades Table ──
+  function fetchTrades(page) {
+    var sym = $('fSymbol').value;
+    var side = $('fSide').value;
+    var url = '/api/trades?page=' + (page || 1) + '&per_page=15';
+    if (sym) url += '&symbol=' + encodeURIComponent(sym);
+    if (side) url += '&side=' + encodeURIComponent(side);
+    fetch(url).then(function(r) { return r.json(); }).then(function(d) {
+      var area = $('tradesTable');
+      if (!d.trades || d.trades.length === 0) { area.innerHTML = '<p style="color:var(--muted)">暂无交易记录</p>'; $('tradesPagination').innerHTML = ''; return; }
+      var html = '<table><tr><th>时间</th><th>方向</th><th>交易对</th><th>数量</th><th>价格</th><th>盈亏</th></tr>';
+      d.trades.forEach(function(t) {
+        var sc = t.side === 'buy' ? 'green' : 'red';
+        var pnlStr = '--';
+        if (t.pnl !== undefined && t.pnl !== null) { pnlStr = '<span class="' + cls(t.pnl) + '">' + fmt(t.pnl) + '</span>'; }
+        html += '<tr><td>' + (t.ts || '') + '</td><td class="' + sc + '">' + t.side.toUpperCase() + '</td><td>' + t.symbol + '</td><td>' + fmt(t.amount, 6) + '</td><td>' + fmt(t.price) + '</td><td>' + pnlStr + '</td></tr>';
+      });
+      html += '</table>';
+      area.innerHTML = html;
+      // Pagination
+      var pg = $('tradesPagination');
+      var pgHtml = '';
+      if (d.page > 1) pgHtml += '<button class="btn" onclick="fetchTrades(' + (d.page - 1) + ')">上一页</button>';
+      pgHtml += '<span class="info">第 ' + d.page + ' / ' + d.pages + ' 页 (共 ' + d.total + ' 条)</span>';
+      if (d.page < d.pages) pgHtml += '<button class="btn" onclick="fetchTrades(' + (d.page + 1) + ')">下一页</button>';
+      pg.innerHTML = pgHtml;
+      // Populate symbol filter
+      var sel = $('fSymbol');
+      if (sel.options.length <= 1) {
+        var seen = {};
+        d.trades.forEach(function(t) { seen[t.symbol] = true; });
+        // Fetch all to get symbols — or just use config
+      }
+    }).catch(function(e) { showError('交易数据加载失败'); });
+  }
+  fetchTrades(1);
+  // Expose to global for onclick
+  window.fetchTrades = fetchTrades;
+
+  // ── Config for symbol filter + settings ──
+  fetch('/api/config').then(function(r) { return r.json(); }).then(function(d) {
+    // Symbol filter
+    var sel = $('fSymbol');
+    if (d.symbols) {
+      d.symbols.forEach(function(s) { var o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o); });
+    }
+    // Settings list
+    var list = $('configList');
+    var html = '';
+    var keys = Object.keys(d);
+    keys.forEach(function(k) {
+      html += '<li><span>' + k + '</span><span>' + JSON.stringify(d[k]) + '</span></li>';
+    });
+    list.innerHTML = html;
+    // Backtest defaults
+    if (d.symbols && d.symbols[0]) $('btSymbol').value = d.symbols[0];
+    if (d.timeframe) $('btTF').value = d.timeframe;
+    if (d.fast_window) $('btFast').value = d.fast_window;
+    if (d.slow_window) $('btSlow').value = d.slow_window;
+  }).catch(function(e) {});
+
+  // ── Backtest ──
+  window.runBacktest = function(e) {
+    e.preventDefault();
+    var btn = $('btRun');
+    btn.disabled = true; btn.textContent = '运行中...';
+    var body = { symbol: $('btSymbol').value, timeframe: $('btTF').value, days: parseInt($('btDays').value) || 30, fast: parseInt($('btFast').value) || 5, slow: parseInt($('btSlow').value) || 20 };
+    fetch('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function(r) { return r.json(); }).then(function(d) {
+      btn.disabled = false; btn.textContent = '运行回测';
+      if (d.error) { showError('回测失败: ' + d.error); return; }
+      $('btResult').style.display = 'block';
+      var m = $('btMetrics');
+      m.innerHTML = '<div class="metric"><div class="label">总收益</div><div class="value ' + cls(d.total_return) + '">' + fmt(d.total_return * 100, 2) + '%</div></div>' +
+        '<div class="metric"><div class="label">交易数</div><div class="value">' + d.total_trades + '</div></div>' +
+        '<div class="metric"><div class="label">胜率</div><div class="value">' + fmt(d.win_rate * 100, 1) + '%</div></div>' +
+        '<div class="metric"><div class="label">盈亏比</div><div class="value">' + fmt(d.profit_factor) + '</div></div>' +
+        '<div class="metric"><div class="label">最大回撤</div><div class="value red">' + fmt(d.max_drawdown * 100, 2) + '%</div></div>';
+      if (d.equity_curve && d.equity_curve.length > 0) {
+        var ctx = $('btChart').getContext('2d');
+        if (btChartObj) btChartObj.destroy();
+        btChartObj = new Chart(ctx, {
+          type: 'line',
+          data: { labels: d.equity_curve.map(function(_, i) { return i; }), datasets: [{ label: '回测权益', data: d.equity_curve, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0 }] },
+          options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#8b949e', maxTicksLimit: 10 }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } } } }
+        });
+      }
+    }).catch(function(e) { btn.disabled = false; btn.textContent = '运行回测'; showError('回测请求失败: ' + e.message); });
+  };
+})();
+</script>
 </body></html>""")
 
 
@@ -90,45 +455,13 @@ def _reconstruct_account(config: BotConfig, trades: list[dict]) -> tuple[float, 
 
 
 def _build_dashboard(config: BotConfig) -> str:
-    store = TradeStore(config.db_path)
-    trades = store.list_trades()
-
-    balance, positions, prices = _reconstruct_account(config, trades)
-
-    pos_value = sum(amount * prices.get(sym, 0) for sym, amount in positions.items())
-    total = balance + pos_value
-    ret_pct = (total - config.initial_balance_usdt) / config.initial_balance_usdt * 100
-
-    # 持仓 HTML
-    if positions:
-        rows = ""
-        for sym, amount in positions.items():
-            price = prices.get(sym, 0)
-            val = amount * price
-            rows += f"<tr><td>{sym}</td><td>{amount:.6f}</td><td>{price:.2f}</td><td>{val:.2f}</td></tr>"
-        pos_html = f"<table><tr><th>交易对</th><th>数量</th><th>价格</th><th>价值</th></tr>{rows}</table>"
-    else:
-        pos_html = "<p style='color:#8b949e'>空仓</p>"
-
-    # 交易 HTML
-    recent = trades[-20:] if trades else []
-    if recent:
-        rows = ""
-        for t in reversed(recent):
-            side_class = "pos" if t["side"] == "buy" else "neg"
-            rows += f"<tr><td>{t.get('ts', '')}</td><td class='{side_class}'>{t['side'].upper()}</td><td>{t['symbol']}</td><td>{t['amount']:.6f}</td><td>{t['price']:.2f}</td></tr>"
-        trades_html = f"<table><tr><th>时间</th><th>方向</th><th>交易对</th><th>数量</th><th>价格</th></tr>{rows}</table>"
-    else:
-        trades_html = "<p style='color:#8b949e'>暂无交易记录</p>"
-
+    """Build the modern single-page dashboard HTML."""
     return HTML_TEMPLATE.safe_substitute(
         css=CSS,
-        time=datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S"),
-        balance=f"{balance:.2f}", pos_value=f"{pos_value:.2f}", total=f"{total:.2f}",
-        return_pct=f"{ret_pct:+.2f}%",
-        total_class="green" if total >= config.initial_balance_usdt else "red",
-        ret_class="green" if ret_pct >= 0 else "red",
-        positions_html=pos_html, trades_html=trades_html,
+        default_symbol=config.symbol,
+        default_tf=config.timeframe,
+        default_fast=config.fast_window,
+        default_slow=config.slow_window,
     )
 
 
@@ -357,6 +690,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/status":
             self._json_response(_build_api_status(config))
 
+        elif path == "/api/stream":
+            self._sse_stream(config)
+
         elif path == "/api/trades":
             symbol = qs.get("symbol", [None])[0]
             side = qs.get("side", [None])[0]
@@ -434,6 +770,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"error": "not found"}).encode())
 
+    def _sse_stream(self, config: BotConfig) -> None:
+        """SSE endpoint: push status updates every 5 seconds."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        try:
+            while True:
+                status = _build_api_status(config)
+                data = json.dumps(status)
+                self.wfile.write(f"data: {data}\n\n".encode())
+                self.wfile.flush()
+                time.sleep(5)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # Client disconnected cleanly
+
     def _json_response(self, data: dict, status: int = 200) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -445,7 +798,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def run_dashboard(host: str = "0.0.0.0", port: int = 50001) -> None:
-    server = HTTPServer((host, port), DashboardHandler)
+    server = ThreadingHTTPServer((host, port), DashboardHandler)
     print(f"🌐 Dashboard running at http://{host}:{port}")
     try:
         server.serve_forever()
