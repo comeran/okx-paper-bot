@@ -1,11 +1,115 @@
 """Bot configuration - all parameters from .env or CLI overrides."""
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+
+@dataclass
+class StrategyInstance:
+    """A single strategy instance with its own params and symbols."""
+    name: str = "default"
+    strategy: str = "ma_crossover"
+    symbols: list[str] = field(default_factory=lambda: ["BTC/USDT"])
+    timeframe: str = "1h"
+    fast_window: int = 5
+    slow_window: int = 20
+    rsi_period: int = 14
+    rsi_buy: float = 30.0
+    rsi_sell: float = 70.0
+    bollinger_period: int = 20
+    bollinger_std: float = 2.0
+    stop_loss_pct: float = 0.05
+    take_profit_pct: float = 0.10
+    trailing_stop_pct: float = 0.0
+    tp1_pct: float = 0.0
+    tp1_fraction: float = 0.5
+    tp2_pct: float = 0.0
+    tp2_fraction: float = 1.0
+    order_usdt: float = 500.0
+
+    def strategy_params(self) -> dict:
+        """Return strategy-specific params for get_strategy()."""
+        if self.strategy == "ma_crossover":
+            return {"fast": self.fast_window, "slow": self.slow_window}
+        elif self.strategy == "rsi":
+            return {"period": self.rsi_period, "oversold": self.rsi_buy, "overbought": self.rsi_sell}
+        elif self.strategy == "bollinger":
+            return {"period": self.bollinger_period, "std_dev": self.bollinger_std}
+        elif self.strategy == "macd":
+            return {"fast_period": self.fast_window, "slow_period": self.slow_window, "signal_period": 9}
+        return {}
+
+
+STRATEGIES_FILE = "strategies.json"
+
+
+def load_strategy_instances(config_dir: Path | str = Path(".")) -> list[StrategyInstance]:
+    """Load strategy instances from strategies.json. Returns empty list if not found."""
+    path = Path(config_dir) / STRATEGIES_FILE
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        instances = []
+        for item in data.get("instances", []):
+            instances.append(StrategyInstance(
+                name=item.get("name", "default"),
+                strategy=item.get("strategy", "ma_crossover"),
+                symbols=item.get("symbols", ["BTC/USDT"]),
+                timeframe=item.get("timeframe", "1h"),
+                fast_window=int(item.get("fast_window", 5)),
+                slow_window=int(item.get("slow_window", 20)),
+                rsi_period=int(item.get("rsi_period", 14)),
+                rsi_buy=float(item.get("rsi_buy", 30.0)),
+                rsi_sell=float(item.get("rsi_sell", 70.0)),
+                bollinger_period=int(item.get("bollinger_period", 20)),
+                bollinger_std=float(item.get("bollinger_std", 2.0)),
+                stop_loss_pct=float(item.get("stop_loss_pct", 0.05)),
+                take_profit_pct=float(item.get("take_profit_pct", 0.10)),
+                trailing_stop_pct=float(item.get("trailing_stop_pct", 0.0)),
+                tp1_pct=float(item.get("tp1_pct", 0.0)),
+                tp1_fraction=float(item.get("tp1_fraction", 0.5)),
+                tp2_pct=float(item.get("tp2_pct", 0.0)),
+                tp2_fraction=float(item.get("tp2_fraction", 1.0)),
+                order_usdt=float(item.get("order_usdt", 500.0)),
+            ))
+        return instances
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return []
+
+
+def save_strategy_instances(instances: list[StrategyInstance], config_dir: Path | str = Path(".")) -> None:
+    """Save strategy instances to strategies.json."""
+    path = Path(config_dir) / STRATEGIES_FILE
+    data = {"instances": []}
+    for inst in instances:
+        data["instances"].append({
+            "name": inst.name,
+            "strategy": inst.strategy,
+            "symbols": inst.symbols,
+            "timeframe": inst.timeframe,
+            "fast_window": inst.fast_window,
+            "slow_window": inst.slow_window,
+            "rsi_period": inst.rsi_period,
+            "rsi_buy": inst.rsi_buy,
+            "rsi_sell": inst.rsi_sell,
+            "bollinger_period": inst.bollinger_period,
+            "bollinger_std": inst.bollinger_std,
+            "stop_loss_pct": inst.stop_loss_pct,
+            "take_profit_pct": inst.take_profit_pct,
+            "trailing_stop_pct": inst.trailing_stop_pct,
+            "tp1_pct": inst.tp1_pct,
+            "tp1_fraction": inst.tp1_fraction,
+            "tp2_pct": inst.tp2_pct,
+            "tp2_fraction": inst.tp2_fraction,
+            "order_usdt": inst.order_usdt,
+        })
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 @dataclass(frozen=True)

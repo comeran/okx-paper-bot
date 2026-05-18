@@ -295,10 +295,45 @@ class TestApiConfig:
         assert "bollinger_period" in result
         assert "bollinger_std" in result
 
+    def test_update_api_config_writes_env(self, tmp_dir, monkeypatch):
+        from okx_paper_bot import dashboard
+        env_file = tmp_dir / ".env"
+        env_file.write_text("OKX_API_KEY=keep-secret\nOKX_SYMBOL=BTC/USDT\n")
+        monkeypatch.setenv("OKX_BOT_ENV_FILE", str(env_file))
+        result = dashboard._update_api_config({
+            "symbols": "BTC/USDT,ETH/USDT",
+            "symbol": "ETH/USDT",
+            "strategy": "rsi",
+            "timeframe": "5m",
+            "fast_window": 8,
+            "slow_window": 21,
+            "initial_balance": 2000.0,
+            "order_usdt": 150.0,
+            "max_position_fraction": 0.3,
+            "stop_loss_pct": 0.04,
+            "take_profit_pct": 0.12,
+            "trailing_stop_pct": 0.02,
+            "loop_interval_seconds": 30,
+        })
+        content = env_file.read_text()
+        assert "OKX_API_KEY=keep-secret" in content
+        assert "OKX_SYMBOLS=BTC/USDT,ETH/USDT" in content
+        assert "OKX_SYMBOL=ETH/USDT" in content
+        assert "STRATEGY=rsi" in content
+        assert "OKX_TIMEFRAME=5m" in content
+        assert result["symbols"] == ["BTC/USDT", "ETH/USDT"]
+        assert result["strategy"] == "rsi"
+        assert result["fast_window"] == 8
+        assert result["loop_interval_seconds"] == 30
+
 
 # ── Task 6: POST /api/backtest (data handling) ───────────────────────────
 
 class TestApiBacktest:
+
+    def test_dashboard_backtest_imports_current_exchange_factory(self):
+        from okx_paper_bot.exchange import create_okx_exchange
+        assert callable(create_okx_exchange)
 
     def test_backtest_result_serialization(self):
         """Test that BacktestResult can be serialized to expected format."""

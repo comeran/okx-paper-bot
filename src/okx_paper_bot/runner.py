@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from okx_paper_bot.bot import TradingBot
-from okx_paper_bot.config import BotConfig
+from okx_paper_bot.config import BotConfig, StrategyInstance, load_strategy_instances
 from okx_paper_bot.exchange import create_okx_exchange, fetch_close_prices
 from okx_paper_bot.paper import PaperAccount
 from okx_paper_bot.store import TradeStore
@@ -38,8 +38,51 @@ def _handle_signal(signum, frame):
     raise GracefulExit(0)
 
 
+def _build_bot_config(config: BotConfig, inst: StrategyInstance) -> BotConfig:
+    """Create a BotConfig override from a StrategyInstance."""
+    return BotConfig(
+        symbol=inst.symbols[0] if inst.symbols else config.symbol,
+        symbols=tuple(inst.symbols),
+        timeframe=inst.timeframe,
+        okx_demo=config.okx_demo,
+        strategy_name=inst.strategy,
+        fast_window=inst.fast_window,
+        slow_window=inst.slow_window,
+        rsi_period=inst.rsi_period,
+        rsi_buy=inst.rsi_buy,
+        rsi_sell=inst.rsi_sell,
+        bollinger_period=inst.bollinger_period,
+        bollinger_std=inst.bollinger_std,
+        initial_balance_usdt=config.initial_balance_usdt,
+        order_usdt=inst.order_usdt,
+        max_position_fraction=config.max_position_fraction,
+        fee_pct=config.fee_pct,
+        slippage_pct=config.slippage_pct,
+        db_path=config.db_path,
+        api_key=config.api_key,
+        secret=config.secret,
+        password=config.password,
+        stop_loss_pct=inst.stop_loss_pct,
+        take_profit_pct=inst.take_profit_pct,
+        trailing_stop_pct=inst.trailing_stop_pct,
+        tp1_pct=inst.tp1_pct,
+        tp1_fraction=inst.tp1_fraction,
+        tp2_pct=inst.tp2_pct,
+        tp2_fraction=inst.tp2_fraction,
+        notify_file=config.notify_file,
+        loop_interval_seconds=config.loop_interval_seconds,
+    )
+
+
+def _sleep_for_instance(inst: StrategyInstance, default_interval: int) -> int:
+    """Compute sleep seconds for a strategy instance."""
+    if default_interval > 0:
+        return default_interval
+    return _TIMEFRAME_SECONDS.get(inst.timeframe, 60)
+
+
 def run_loop(config: BotConfig | None = None) -> None:
-    """持续运行交易机器人（支持多交易对）。"""
+    """持续运行交易机器人（支持多策略实例）。"""
     if config is None:
         config = BotConfig.from_env()
 
@@ -49,26 +92,67 @@ def run_loop(config: BotConfig | None = None) -> None:
     exchange = create_okx_exchange(config)
     account = PaperAccount(balance_usdt=config.initial_balance_usdt)
     store = TradeStore(config.db_path)
-    bot = TradingBot(config, account, store)
 
     equity_file = Path(config.db_path).parent / "equity_history.json"
     tracker = EquityTracker(equity_file)
 
-    interval = _sleep_seconds(config.timeframe, config.loop_interval_seconds)
-    limit = max(config.slow_window + 1, 22)
-    symbols = config.all_symbols
+    # Load strategy instances or fall back to legacy single strategy
+    instances = load_strategy_instances()
+    if not instances:
+        instances = [StrategyInstance(
+            name="default",
+            strategy=config.strategy_name,
+            symbols=config.all_symbols,
+            timeframe=config.timeframe,
+            fast_window=config.fast_window,
+            slow_window=config.slow_window,
+            rsi_period=config.rsi_period,
+            rsi_buy=config.rsi_buy,
+            rsi_sell=config.rsi_sell,
+            bollinger_period=config.bollinger_period,
+            bollinger_std=config.bollinger_std,
+            stop_loss_pct=config.stop_loss_pct,
+            take_profit_pct=config.take_profit_pct,
+            trailing_stop_pct=config.trailing_stop_pct,
+            tp1_pct=config.tp1_pct,
+            tp1_fraction=config.tp1_fraction,
+            tp2_pct=config.tp2_pct,
+            tp2_fraction=config.tp2_fraction,
+            order_usdt=config.order_usdt,
+        )]
+
+    # Create a TradingBot per instance
+    bots: list[tuple[StrategyInstance, TradingBot]] = []
+    for inst in instances:
+        inst_config = _build_bot_config(config, inst)
+        bot = TradingBot(inst_config, account, store)
+        bots.append((inst, bot))
+
+    # Collect all unique symbols and determine min sleep interval
+    all_symbols: list[str] = []
+    seen_syms: set[str] = set()
+    for inst, _ in bots:
+        for s in inst.symbols:
+            if s not in seen_syms:
+                all_symbols.append(s)
+                seen_syms.add(s)
+
+    min_interval = min(_sleep_for_instance(inst, config.loop_interval_seconds) for inst, _ in bots)
+
+    # Build strategy summary
+    strat_lines = []
+    for inst, _ in bots:
+        strat_lines.append(f"  [{inst.name}] {inst.strategy} -> {', '.join(inst.symbols)} ({inst.timeframe})")
 
     start_msg = (
         f"🚀 交易机器人启动\n"
-        f"交易对: {', '.join(symbols)}\n"
-        f"策略: {config.strategy_name}\n"
-        f"时间框架: {config.timeframe}\n"
-        f"检查间隔: {interval}s\n"
-        f"止损: {config.stop_loss_pct*100:.1f}% | 止盈: {config.take_profit_pct*100:.1f}%\n"
+        f"策略实例: {len(bots)} 个\n"
+        + "\n".join(strat_lines) + "\n"
+        f"检查间隔: {min_interval}s\n"
         f"初始余额: {config.initial_balance_usdt:.2f} USDT\n"
         f"Demo: {config.okx_demo}"
     )
-    notify(start_msg, bot.notify_file)
+    notify(start_msg, bots[0][1].notify_file)
 
     cycle = 0
     last_prices: dict[str, float] = {}
@@ -77,15 +161,21 @@ def run_loop(config: BotConfig | None = None) -> None:
             cycle += 1
             now = datetime.now(BJT).strftime("%H:%M:%S")
             try:
-                for sym in symbols:
-                    closes = fetch_close_prices(exchange, symbol=sym, timeframe=config.timeframe, limit=limit)
-                    last_prices[sym] = closes[-1]
-                    result = bot.on_prices(closes, symbol=sym)
-                    sig = result["signal"]
+                for inst, bot in bots:
+                    # Per-instance limit based on slow window
+                    limit = max(inst.slow_window + 1, 22)
+                    for sym in inst.symbols:
+                        closes = fetch_close_prices(exchange, symbol=sym, timeframe=inst.timeframe, limit=limit)
+                        last_prices[sym] = closes[-1]
+                        result = bot.on_prices(closes, symbol=sym)
+                        sig = result["signal"]
 
-                    if sig == "hold" and cycle % 10 == 0:
-                        status_msg = format_status(sym, closes[-1], account.balance_usdt, account.positions, sig)
-                        print(f"[{now}] {status_msg}")
+                        if sig == "hold" and cycle % 10 == 0:
+                            status_msg = format_status(
+                                f"[{inst.name}]{sym}", closes[-1],
+                                account.balance_usdt, account.positions, sig,
+                            )
+                            print(f"[{now}] {status_msg}")
 
                 # 记录权益快照
                 stats = PortfolioStats(
@@ -101,7 +191,7 @@ def run_loop(config: BotConfig | None = None) -> None:
             except Exception as exc:
                 print(f"[{now}] ⚠️ 周期 {cycle} 错误: {exc}")
 
-            time.sleep(interval)
+            time.sleep(min_interval)
 
     except GracefulExit:
         pass
@@ -117,4 +207,4 @@ def run_loop(config: BotConfig | None = None) -> None:
             f"持仓: {dict(account.positions)}\n"
             f"账户总值: {total:.2f} USDT"
         )
-        notify(exit_msg, bot.notify_file)
+        notify(exit_msg, bots[0][1].notify_file)
