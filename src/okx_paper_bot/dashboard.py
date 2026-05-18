@@ -403,6 +403,8 @@ HTML_TEMPLATE = Template("""
   OKX Paper Trading Bot v3 &mdash; <span id="sseStatus">连接中...</span>
 </div>
 
+<script src="/static/js/dashboard.js"></script>
+</body></html>
 """)
 
 
