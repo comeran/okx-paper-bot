@@ -90,10 +90,10 @@ def run_loop(config: BotConfig | None = None) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
 
     exchange = create_okx_exchange(config)
-    account = PaperAccount(balance_usdt=config.initial_balance_usdt)
     store = TradeStore(config.db_path)
+    data_dir = Path(config.db_path).parent
 
-    equity_file = Path(config.db_path).parent / "equity_history.json"
+    equity_file = data_dir / "equity_history.json"
     tracker = EquityTracker(equity_file)
 
     # Load strategy instances or fall back to legacy single strategy
@@ -119,14 +119,23 @@ def run_loop(config: BotConfig | None = None) -> None:
             tp2_pct=config.tp2_pct,
             tp2_fraction=config.tp2_fraction,
             order_usdt=config.order_usdt,
+            equity=config.initial_balance_usdt,
         )]
 
-    # Create a TradingBot per instance
+    # Create independent PaperAccount per instance
+    accounts: dict[str, PaperAccount] = {}
     bots: list[tuple[StrategyInstance, TradingBot]] = []
     for inst in instances:
+        # Each instance has its own account file and equity
+        acct_file = data_dir / f"account_{inst.name}.json"
+        inst_equity = inst.equity if inst.equity > 0 else config.initial_balance_usdt
+        acct = PaperAccount.load(acct_file, fallback_balance=inst_equity)
+        accounts[inst.name] = acct
         inst_config = _build_bot_config(config, inst)
-        bot = TradingBot(inst_config, account, store)
+        bot = TradingBot(inst_config, acct, store, instance_name=inst.name)
         bots.append((inst, bot))
+        pos_info = acct.positions if acct.positions else "空仓"
+        print(f"📦 [{inst.name}] 余额: {acct.balance_usdt:.2f} | 持仓: {pos_info} | 分配权益: {inst_equity:.2f}")
 
     # Collect all unique symbols and determine min sleep interval
     all_symbols: list[str] = []
@@ -171,22 +180,33 @@ def run_loop(config: BotConfig | None = None) -> None:
                         sig = result["signal"]
 
                         if sig == "hold" and cycle % 10 == 0:
+                            acct = accounts[inst.name]
                             status_msg = format_status(
                                 f"[{inst.name}]{sym}", closes[-1],
-                                account.balance_usdt, account.positions, sig,
+                                acct.balance_usdt, acct.positions, sig,
                             )
                             print(f"[{now}] {status_msg}")
 
-                # 记录权益快照
+                # 记录权益快照（汇总所有账户）
+                total_balance = sum(a.balance_usdt for a in accounts.values())
+                total_positions = {}
+                for a in accounts.values():
+                    for sym, qty in a.positions.items():
+                        total_positions[sym] = total_positions.get(sym, 0) + qty
                 stats = PortfolioStats(
                     initial_balance=config.initial_balance_usdt,
-                    current_balance=account.balance_usdt,
-                    positions=dict(account.positions),
+                    current_balance=total_balance,
+                    positions=total_positions,
                     current_prices=last_prices,
                 )
                 tracker.record(stats.snapshot())
+                # 保存每个账户
+                for name, acct in accounts.items():
+                    acct.save(data_dir / f"account_{name}.json")
 
             except GracefulExit:
+                for name, acct in accounts.items():
+                    acct.save(data_dir / f"account_{name}.json")
                 raise
             except Exception as exc:
                 print(f"[{now}] ⚠️ 周期 {cycle} 错误: {exc}")
@@ -196,15 +216,15 @@ def run_loop(config: BotConfig | None = None) -> None:
     except GracefulExit:
         pass
     finally:
-        total = account.balance_usdt
-        for sym, qty in account.positions.items():
-            price = last_prices.get(sym, 0)
-            total += qty * price
-        exit_msg = (
-            f"🛑 交易机器人停止\n"
-            f"运行周期: {cycle}\n"
-            f"余额: {account.balance_usdt:.2f} USDT\n"
-            f"持仓: {dict(account.positions)}\n"
-            f"账户总值: {total:.2f} USDT"
-        )
+        total = sum(a.balance_usdt for a in accounts.values())
+        for a in accounts.values():
+            for sym, qty in a.positions.items():
+                price = last_prices.get(sym, 0)
+                total += qty * price
+        exit_lines = [f"🛑 交易机器人停止", f"运行周期: {cycle}"]
+        for inst, _ in bots:
+            acct = accounts[inst.name]
+            exit_lines.append(f"[{inst.name}] 余额: {acct.balance_usdt:.2f} | 持仓: {dict(acct.positions)}")
+        exit_lines.append(f"账户总值: {total:.2f} USDT")
+        exit_msg = "\n".join(exit_lines)
         notify(exit_msg, bots[0][1].notify_file)

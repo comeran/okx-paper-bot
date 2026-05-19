@@ -1,8 +1,10 @@
 """模拟账户 - 多仓位管理 + 部分止盈 + 限价单 + 手续费滑点。"""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from itertools import count
+from pathlib import Path
 
 
 @dataclass
@@ -169,3 +171,44 @@ class PaperAccount:
         else:
             self._pending_orders.clear()
         return before - len(self._pending_orders)
+
+    def save(self, path: str | Path) -> None:
+        """Persist account state to JSON file."""
+        data = {
+            "balance_usdt": self.balance_usdt,
+            "fee_pct": self.fee_pct,
+            "slippage_pct": self.slippage_pct,
+            "positions": [
+                {"symbol": p.symbol, "amount": p.amount, "entry_price": p.entry_price, "entry_time": p.entry_time}
+                for p in self._positions if p.amount > 1e-12
+            ],
+            "pending_orders": self._pending_orders,
+            "next_id": next(self._ids) if hasattr(self, '_ids') else 1,
+        }
+        Path(path).write_text(json.dumps(data, indent=2))
+
+    @classmethod
+    def load(cls, path: str | Path, fallback_balance: float = 1_000.0) -> "PaperAccount":
+        """Load account state from JSON file. Returns fresh account if file missing."""
+        p = Path(path)
+        if not p.exists():
+            return cls(balance_usdt=fallback_balance)
+        try:
+            data = json.loads(p.read_text())
+            acc = cls(
+                balance_usdt=data.get("balance_usdt", fallback_balance),
+                fee_pct=data.get("fee_pct", 0.001),
+                slippage_pct=data.get("slippage_pct", 0.0005),
+            )
+            for pos in data.get("positions", []):
+                acc._positions.append(Position(
+                    symbol=pos["symbol"], amount=pos["amount"],
+                    entry_price=pos["entry_price"], entry_time=pos.get("entry_time", ""),
+                ))
+            acc._pending_orders = data.get("pending_orders", [])
+            # Set ID counter past the last known ID
+            next_id = data.get("next_id", 1)
+            acc._ids = count(next_id)
+            return acc
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return cls(balance_usdt=fallback_balance)

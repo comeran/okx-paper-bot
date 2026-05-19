@@ -31,6 +31,7 @@ class StrategyInstance:
     tp2_pct: float = 0.0
     tp2_fraction: float = 1.0
     order_usdt: float = 500.0
+    equity: float = 0.0  # 分配的权益，0 表示使用全局余额
 
     def strategy_params(self) -> dict:
         """Return strategy-specific params for get_strategy()."""
@@ -77,6 +78,7 @@ def load_strategy_instances(config_dir: Path | str = Path(".")) -> list[Strategy
                 tp2_pct=float(item.get("tp2_pct", 0.0)),
                 tp2_fraction=float(item.get("tp2_fraction", 1.0)),
                 order_usdt=float(item.get("order_usdt", 500.0)),
+                equity=float(item.get("equity", 0.0)),
             ))
         return instances
     except (json.JSONDecodeError, KeyError, TypeError):
@@ -108,6 +110,7 @@ def save_strategy_instances(instances: list[StrategyInstance], config_dir: Path 
             "tp2_pct": inst.tp2_pct,
             "tp2_fraction": inst.tp2_fraction,
             "order_usdt": inst.order_usdt,
+            "equity": inst.equity,
         })
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 

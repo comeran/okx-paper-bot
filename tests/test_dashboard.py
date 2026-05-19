@@ -480,6 +480,55 @@ class TestApiControl:
         assert [pid for pid, _sig in killed] == [123, 456]
 
 
+# ── Dashboard v4 per-instance data layer ─────────────────────────────────
+
+class TestDashboardV4:
+
+    def test_trades_keep_instance_strategy_metadata_and_filter(self, config, store):
+        from okx_paper_bot.dashboard import _build_api_trades
+
+        store.record_trade("BTC/USDT", "buy", 1.0, 100.0, "a-buy", instance_name="A", strategy_name="ma_crossover")
+        store.record_trade("BTC/USDT", "buy", 1.0, 200.0, "b-buy", instance_name="B", strategy_name="rsi")
+        store.record_trade("BTC/USDT", "sell", 1.0, 110.0, "a-sell", instance_name="A", strategy_name="ma_crossover")
+
+        result = _build_api_trades(config, instance="A")
+        assert result["total"] == 2
+        rows = list(reversed(result["trades"]))
+        assert [r["instance_name"] for r in rows] == ["A", "A"]
+        assert rows[1]["pnl"] == pytest.approx(10.0)
+
+    def test_pnl_fifo_is_isolated_by_instance_for_same_symbol(self, config, store):
+        from okx_paper_bot.dashboard import _build_api_stats
+
+        store.record_trade("BTC/USDT", "buy", 1.0, 100.0, "a-buy", instance_name="A", strategy_name="ma_crossover")
+        store.record_trade("BTC/USDT", "buy", 1.0, 200.0, "b-buy", instance_name="B", strategy_name="rsi")
+        store.record_trade("BTC/USDT", "sell", 1.0, 110.0, "a-sell", instance_name="A", strategy_name="ma_crossover")
+        store.record_trade("BTC/USDT", "sell", 1.0, 180.0, "b-sell", instance_name="B", strategy_name="rsi")
+
+        a = _build_api_stats(config, instance="A")
+        b = _build_api_stats(config, instance="B")
+        assert a["total_pnl"] == pytest.approx(10.0)
+        assert b["total_pnl"] == pytest.approx(-20.0)
+        assert a["win_rate"] == pytest.approx(1.0)
+        assert b["win_rate"] == pytest.approx(0.0)
+
+    def test_dashboard_v4_payload_has_account_instances_and_strategy_compare(self, config, store):
+        from okx_paper_bot.dashboard import _build_api_dashboard_v4
+
+        store.record_trade("BTC/USDT", "buy", 1.0, 100.0, "a-buy", instance_name="A", strategy_name="ma_crossover")
+        store.record_trade("BTC/USDT", "sell", 1.0, 110.0, "a-sell", instance_name="A", strategy_name="ma_crossover")
+        store.record_trade("ETH/USDT", "buy", 2.0, 50.0, "b-buy", instance_name="B", strategy_name="rsi")
+        store.record_trade("ETH/USDT", "sell", 2.0, 45.0, "b-sell", instance_name="B", strategy_name="rsi")
+
+        payload = _build_api_dashboard_v4(config)
+        assert payload["version"] == "v4"
+        assert "account" in payload and "stats" in payload["account"]
+        by_strategy = {s["strategy"]: s for s in payload["strategies"]}
+        assert by_strategy["ma_crossover"]["total_pnl"] == pytest.approx(10.0)
+        assert by_strategy["rsi"]["total_pnl"] == pytest.approx(-10.0)
+        assert payload["totals"]["trades_count"] == 4
+
+
 # ── HTTP integration tests ───────────────────────────────────────────────
 
 class TestDashboardHTTP:

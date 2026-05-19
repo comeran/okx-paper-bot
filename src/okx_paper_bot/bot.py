@@ -14,16 +14,24 @@ from okx_paper_bot.notify import notify, format_trade_signal, format_error, form
 
 class TradingBot:
     def __init__(self, config: BotConfig, account: PaperAccount, store: TradeStore,
-                 notify_file: Path | str | None = None):
+                 notify_file: Path | str | None = None, instance_name: str = ""):
         self.config = config
         self.account = account
         self.store = store
         self.notify_file = notify_file or config.notify_file
+        self.instance_name = instance_name or "default"
+        self.strategy_name = config.strategy_name
         self._queue_file = Path("data/notify_queue.jsonl")
         self._entry_prices: dict[str, float] = {}
         self._highest_prices: dict[str, float] = {}
         # 部分止盈状态: {symbol: {"tp1_done": False, "tp2_done": False}}
         self._partial_tp_state: dict[str, dict] = {}
+
+    def _record_trade(self, symbol: str, side: str, amount: float, price: float, order_id: str) -> None:
+        self.store.record_trade(
+            symbol, side, amount=amount, price=price, order_id=order_id,
+            instance_name=self.instance_name, strategy_name=self.strategy_name,
+        )
 
     def _get_signal(self, closes: list[float]) -> str:
         cfg = self.config
@@ -55,7 +63,7 @@ class TradingBot:
             close_orders = self.account.close_partial(symbol, fraction, price)
             for o in close_orders:
                 if o["status"] == "closed":
-                    self.store.record_trade(symbol, "sell", amount=o["amount"], price=o["price"], order_id=o["id"])
+                    self._record_trade(symbol, "sell", amount=o["amount"], price=o["price"], order_id=o["id"])
                     reason = f"部分止盈1 ({cfg.tp1_pct*100:.0f}%), 平仓{fraction*100:.0f}%"
                     msg = format_trade_signal(symbol, "partial_tp", price, o["amount"], "closed",
                                               self.account.balance_usdt, self.account.positions, reason=reason)
@@ -69,7 +77,7 @@ class TradingBot:
             close_orders = self.account.close_partial(symbol, fraction, price)
             for o in close_orders:
                 if o["status"] == "closed":
-                    self.store.record_trade(symbol, "sell", amount=o["amount"], price=o["price"], order_id=o["id"])
+                    self._record_trade(symbol, "sell", amount=o["amount"], price=o["price"], order_id=o["id"])
                     reason = f"部分止盈2 ({cfg.tp2_pct*100:.0f}%), 平仓{fraction*100:.0f}%"
                     msg = format_trade_signal(symbol, "partial_tp", price, o["amount"], "closed",
                                               self.account.balance_usdt, self.account.positions, reason=reason)
@@ -87,7 +95,7 @@ class TradingBot:
         filled = self.account.check_pending_orders(sym, price)
         for f in filled:
             if f["status"] == "closed":
-                self.store.record_trade(sym, f["side"], amount=f["amount"], price=f["price"], order_id=f["id"])
+                self._record_trade(sym, f["side"], amount=f["amount"], price=f["price"], order_id=f["id"])
                 msg = format_trade_signal(sym, f"limit_{f['side']}", f["price"], f["amount"], "closed",
                                           self.account.balance_usdt, self.account.positions)
                 notify(msg, self.notify_file, self._queue_file)
@@ -116,7 +124,7 @@ class TradingBot:
             if trigger:
                 order = self.account.execute_market_order(sym, "sell", held, price)
                 if order["status"] == "closed":
-                    self.store.record_trade(sym, "sell", amount=order["amount"], price=order["price"], order_id=order["id"])
+                    self._record_trade(sym, "sell", amount=order["amount"], price=order["price"], order_id=order["id"])
                     pnl = (price - self._entry_prices[sym]) * held
                     reason = f"{trigger} 触发, 盈亏: {pnl:+.2f} USDT"
                     msg = format_trade_signal(sym, trigger, price, order["amount"], "closed",
@@ -142,7 +150,7 @@ class TradingBot:
 
         order = self.account.execute_market_order(sym, signal, amount, price)
         if order["status"] == "closed":
-            self.store.record_trade(sym, signal, amount=order["amount"], price=order["price"], order_id=order["id"])
+            self._record_trade(sym, signal, amount=order["amount"], price=order["price"], order_id=order["id"])
             if signal == "buy":
                 self._entry_prices[sym] = price
                 self._highest_prices[sym] = price

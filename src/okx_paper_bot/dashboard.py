@@ -22,389 +22,30 @@ from okx_paper_bot.backtest import BacktestResult
 BJT = timezone(timedelta(hours=8))
 
 CSS = """
-  :root {
-    --bg: #0d1117; --card: #161b22; --border: #30363d;
-    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
-    --green: #3fb950; --red: #f85149; --yellow: #d29922;
-    --purple: #bc8cff;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
-  a { color: var(--accent); text-decoration: none; }
-  .nav { position: sticky; top: 0; z-index: 100; background: var(--card); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0; padding: 0 16px; overflow-x: auto; }
-  .nav .brand { font-weight: 700; color: var(--accent); font-size: 16px; padding: 12px 16px 12px 0; white-space: nowrap; border-right: 1px solid var(--border); margin-right: 8px; }
-  .nav a { padding: 12px 14px; color: var(--muted); font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; transition: color .2s, border-color .2s; }
-  .nav a:hover, .nav a.active { color: var(--text); border-bottom-color: var(--accent); }
-  .section { padding: 20px 20px 8px; scroll-margin-top: 56px; }
-  .section-title { font-size: 18px; font-weight: 600; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-  .metrics { display: flex; flex-wrap: wrap; gap: 12px; }
-  .metric { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; min-width: 140px; flex: 1; }
-  .metric .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .metric .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; position: sticky; top: 0; background: var(--card); }
-  tr:hover { background: rgba(88,166,255,.04); }
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font-size: 14px; cursor: pointer; transition: border-color .2s, background .2s; }
-  .btn:hover { border-color: var(--accent); background: rgba(88,166,255,.08); }
-  .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
-  .btn-primary:hover { background: #2ea043; }
-  .btn-danger { background: #da3633; border-color: #f85149; color: #fff; }
-  .btn-danger:hover { background: #f85149; }
-  .btn-accent { background: #1f6feb; border-color: #58a6ff; color: #fff; }
-  .btn-accent:hover { background: #388bfd; }
-  .btn:disabled { opacity: .5; cursor: not-allowed; }
-  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
-  .filters select, .filters input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text); font-size: 14px; }
-  .filters label { font-size: 13px; color: var(--muted); }
-  .chart-container { position: relative; width: 100%; max-width: 800px; margin: 0 auto; }
-  .chart-container canvas { width: 100% !important; }
-  .green { color: var(--green); } .red { color: var(--red); } .yellow { color: var(--yellow); } .purple { color: var(--purple); }
-  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .loading { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; padding: 20px; }
-  .error-msg { background: rgba(248,81,73,.1); border: 1px solid var(--red); border-radius: 6px; padding: 12px; color: var(--red); font-size: 14px; margin-bottom: 12px; display: none; }
-  .success-msg { background: rgba(63,185,80,.1); border: 1px solid var(--green); border-radius: 6px; padding: 12px; color: var(--green); font-size: 14px; margin-bottom: 12px; display: none; }
-  .pagination { display: flex; align-items: center; gap: 8px; margin-top: 12px; justify-content: center; }
-  .pagination .btn { padding: 6px 12px; font-size: 13px; }
-  .pagination .info { font-size: 13px; color: var(--muted); }
-  .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
-  .form-grid label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
-  .form-grid input, .form-grid select { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 14px; }
-  .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-  .config-field { display: flex; flex-direction: column; gap: 4px; }
-  .config-field label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .config-field input, .config-field select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 14px; transition: border-color .2s; }
-  .config-field input:focus, .config-field select:focus { border-color: var(--accent); outline: none; }
-  .config-field input[type=number] { font-family: monospace; }
-  .config-field .hint { font-size: 11px; color: var(--muted); }
-  .inst-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; cursor: pointer; transition: border-color .2s, box-shadow .2s; }
-  .inst-card:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-  .inst-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.3); }
-  .inst-card .inst-name { font-size: 16px; font-weight: 700; color: var(--accent); }
-  .inst-card .inst-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .inst-card .inst-pnl { font-size: 22px; font-weight: 700; margin-top: 8px; }
-  .inst-card .inst-stats { font-size: 13px; color: var(--muted); margin-top: 6px; }
-  .compare-best { background: rgba(63,185,80,.08); }
-  .compare-worst { background: rgba(248,81,73,.08); }
-  .grid-viz { position: relative; padding: 12px 0; }
-  .grid-row { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 14px; }
-  .grid-row:last-child { border-bottom: none; }
-  .grid-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
-  .grid-dot.available { background: var(--green); }
-  .grid-dot.bought { background: var(--yellow); }
-  .grid-dot.completed { background: var(--muted); }
-  .grid-price { font-weight: 600; min-width: 100px; }
-  .grid-label { font-size: 12px; color: var(--muted); min-width: 80px; }
-  .grid-stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
-  .grid-unavailable { text-align: center; padding: 40px 20px; color: var(--muted); }
-  .grid-unavailable .icon { font-size: 48px; margin-bottom: 12px; }
-  .detail-panel { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-top: 12px; }
-  .detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-  .detail-header h3 { color: var(--accent); font-size: 18px; }
-  .ops-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-  .ops-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; transition: border-color .2s; }
-  .ops-card:hover { border-color: var(--accent); }
-  .ops-card .ops-icon { font-size: 28px; margin-bottom: 8px; }
-  .ops-card .ops-label { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-  .ops-card .ops-desc { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-  @media (max-width: 768px) {
-    .nav { font-size: 13px; }
-    .nav a { padding: 10px 10px; }
-    .metrics { flex-direction: column; }
-    .metric .value { font-size: 20px; }
-    .form-grid { grid-template-columns: 1fr; }
-    .section { padding: 12px; }
-    table { font-size: 12px; }
-    th, td { padding: 6px 8px; }
-    .ops-grid { grid-template-columns: 1fr; }
-  }
+  :root { --bg:#0b1018; --panel:#111827; --panel2:#161f2e; --border:#273244; --text:#dbe7ff; --muted:#8796ad; --accent:#35c2ff; --blue:#58a6ff; --green:#3fb950; --red:#ff6b6b; --yellow:#f2c94c; --purple:#b987ff; --shadow:0 14px 40px rgba(0,0,0,.28); }
+  *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top left,rgba(53,194,255,.10),transparent 34%),var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.45} a{color:inherit;text-decoration:none}
+  .topbar{position:sticky;top:0;z-index:50;background:rgba(11,16,24,.86);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:10px 18px;overflow-x:auto}.brand{font-weight:800;color:var(--accent);white-space:nowrap}.brand small{display:block;color:var(--muted);font-weight:500;font-size:11px}.topbar a{padding:8px 10px;border-radius:999px;color:var(--muted);white-space:nowrap;font-size:13px}.topbar a:hover,.topbar a.active{background:rgba(53,194,255,.12);color:var(--text)}
+  .wrap{max-width:1500px;margin:0 auto;padding:18px}.hero{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin-bottom:14px}.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:var(--shadow)}.section{scroll-margin-top:68px;margin:16px 0}.section-title{font-size:18px;font-weight:800;margin:0 0 12px;display:flex;align-items:center;gap:8px}.sub{font-size:12px;color:var(--muted);margin-top:-6px;margin-bottom:12px}.grid{display:grid;gap:12px}.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.metric{background:rgba(255,255,255,.035);border:1px solid var(--border);border-radius:14px;padding:12px}.label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}.value{font-size:23px;font-weight:800;margin-top:5px}.green{color:var(--green)}.red{color:var(--red)}.yellow{color:var(--yellow)}.purple{color:var(--purple)}.muted{color:var(--muted)}
+  .strategy-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}.inst-card{position:relative;background:linear-gradient(180deg,rgba(53,194,255,.08),rgba(255,255,255,.03));border:1px solid var(--border);border-radius:16px;padding:14px;cursor:pointer;transition:.18s}.inst-card:hover,.inst-card.selected{border-color:var(--accent);transform:translateY(-1px)}.inst-name{font-weight:800;color:var(--accent);font-size:16px}.inst-meta{font-size:12px;color:var(--muted);margin:3px 0 8px}.pill{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:11px;color:var(--muted);margin:2px}.inst-pnl{font-size:24px;font-weight:900;margin:8px 0}.mini-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);border-top:1px solid rgba(255,255,255,.06);padding-top:7px;margin-top:7px}.detail-panel{display:none}.detail-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.tab{padding:7px 10px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted);cursor:pointer}.tab.active{border-color:var(--accent);color:var(--text);background:rgba(53,194,255,.10)}
+  .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.07);white-space:nowrap}th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;background:rgba(255,255,255,.03);position:sticky;top:0}tr:hover{background:rgba(53,194,255,.05)}.compare-best{background:rgba(63,185,80,.08)}.compare-worst{background:rgba(255,107,107,.08)}
+  .filters,.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.filters label{font-size:12px;color:var(--muted)}input,select{background:#0b1018;border:1px solid var(--border);border-radius:10px;color:var(--text);padding:8px 10px}.form-grid,.config-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.form-grid label,.config-field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}.form-grid input,.form-grid select,.config-field input,.config-field select{width:100%}.btn{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.035);color:var(--text);padding:8px 12px;cursor:pointer}.btn:hover{border-color:var(--accent)}.btn-primary{background:#238636;border-color:#2ea043;color:#fff}.btn-accent{background:#1f6feb;border-color:#58a6ff;color:#fff}.btn-danger{background:#da3633;border-color:#f85149;color:#fff}.btn:disabled{opacity:.55;cursor:not-allowed}.chart-container{position:relative;width:100%;height:330px}.chart-container canvas{width:100%!important;max-height:330px}.loading{display:flex;align-items:center;gap:8px;color:var(--muted);padding:16px}.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.error-msg,.success-msg{position:fixed;right:16px;top:64px;z-index:80;max-width:520px;border-radius:12px;padding:12px 14px;display:none}.error-msg{background:rgba(255,107,107,.14);border:1px solid var(--red);color:#ffd1d1}.success-msg{background:rgba(63,185,80,.14);border:1px solid var(--green);color:#c8f7d0}.ops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.ops-card{background:rgba(255,255,255,.035);border:1px solid var(--border);border-radius:14px;padding:14px;cursor:pointer}.ops-card:hover{border-color:var(--accent)}.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:90;justify-content:center;align-items:center}.modal-box{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:18px;width:92%;max-width:720px;max-height:88vh;overflow:auto}.pagination{display:flex;justify-content:center;gap:8px;align-items:center;margin-top:12px}.grid-viz{padding:8px 0}.grid-row{display:flex;gap:10px;align-items:center;border-bottom:1px solid rgba(255,255,255,.07);padding:5px}.grid-dot{width:12px;height:12px;border-radius:50%;background:var(--green)}.grid-dot.bought{background:var(--yellow)}.grid-dot.completed{background:var(--muted)}
+  @media(max-width:900px){.hero,.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}.wrap{padding:12px}.value{font-size:20px}.chart-container{height:280px}}
 """
 
 HTML_TEMPLATE = Template("""
-<!DOCTYPE html>
-<html lang="zh"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OKX Paper Bot Dashboard v3</title>
-<style>$css</style>
-<script src="/static/js/chart.js"></script>
-<script src="/static/js/lightweight-charts.js"></script>
-</head><body>
-
-<nav class="nav">
-  <span class="brand">🤖 OKX Bot</span>
-  <a href="#overview" class="active" data-nav>总览</a>
-  <a href="#strategies" data-nav>策略</a>
-  <a href="#compare" data-nav>对比</a>
-  <a href="#equity" data-nav>权益</a>
-  <a href="#trades" data-nav>交易</a>
-  <a href="#backtest" data-nav>回测</a>
-  <a href="#grid" data-nav>网格</a>
-  <a href="#kline" data-nav>K线</a>
-  <a href="#ops" data-nav>操作</a>
-  <a href="#settings" data-nav>设置</a>
-</nav>
-
-<div class="error-msg" id="errorBox"></div>
-<div class="success-msg" id="successBox"></div>
-
-<!-- ═══ Overview ═══ -->
-<div class="section" id="overview">
-  <div class="section-title">📊 账户总览</div>
-  <div class="metrics">
-    <div class="metric"><div class="label">余额 (USDT)</div><div class="value" id="vBalance">--</div></div>
-    <div class="metric"><div class="label">持仓价值</div><div class="value" id="vPosValue">--</div></div>
-    <div class="metric"><div class="label">账户总值</div><div class="value" id="vEquity">--</div></div>
-    <div class="metric"><div class="label">总收益</div><div class="value" id="vReturn">--</div></div>
-    <div class="metric"><div class="label">策略数</div><div class="value" id="vStratCount">--</div></div>
-    <div class="metric"><div class="label">总交易</div><div class="value" id="vTrades">--</div></div>
-  </div>
-  <div class="card" style="margin-top:12px">
-    <div class="section-title">📦 持仓明细</div>
-    <div id="positionsArea"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
-  </div>
-</div>
-
-<!-- ═══ Strategies ═══ -->
-<div class="section" id="strategies">
-  <div class="section-title">🎯 策略实例</div>
-  <p style="font-size:13px;color:var(--muted);margin-bottom:12px">点击卡片查看策略详情，每个策略独立统计。</p>
-  <div class="metrics" id="instCardsArea"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
-  <div id="instDetailPanel" style="display:none">
-    <div class="detail-panel">
-      <div class="detail-header">
-        <h3 id="detailName">--</h3>
-        <button class="btn" onclick="closeDetail()">✕ 关闭</button>
-      </div>
-      <div class="metrics" id="detailMetrics"></div>
-      <div class="card" style="margin-top:12px">
-        <div class="section-title" style="font-size:15px">📈 策略权益曲线</div>
-        <div class="chart-container"><canvas id="detailEquityChart"></canvas></div>
-        <div class="loading" id="detailEqLoading"><div class="spinner"></div> 加载中...</div>
-      </div>
-      <div class="card" style="margin-top:12px">
-        <div class="section-title" style="font-size:15px">📋 策略交易记录</div>
-        <div id="detailTradesArea"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
-        <div class="pagination" id="detailTradesPagination"></div>
-      </div>
-    </div>
-  </div>
-  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-    <button class="btn btn-primary" onclick="addInstance()">➕ 新增实例</button>
-    <button class="btn" onclick="loadAll()">🔄 刷新全部</button>
-  </div>
-</div>
-
-<!-- ═══ Compare ═══ -->
-<div class="section" id="compare">
-  <div class="section-title">⚖️ 策略对比</div>
-  <div class="card">
-    <div id="compareArea"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
-  </div>
-  <div class="card" style="margin-top:12px">
-    <div class="section-title" style="font-size:15px">📊 对比图表</div>
-    <div class="chart-container"><canvas id="compareChart"></canvas></div>
-  </div>
-</div>
-
-<!-- ═══ Equity ═══ -->
-<div class="section" id="equity">
-  <div class="section-title">📈 权益曲线</div>
-  <div class="card">
-    <div class="filters" style="margin-bottom:8px">
-      <label>实例</label>
-      <select id="eInstance" onchange="loadEquity()"><option value="">全部 (账户总权益)</option></select>
-    </div>
-    <div class="chart-container"><canvas id="equityChart"></canvas></div>
-    <div class="loading" id="equityLoading"><div class="spinner"></div> 加载中...</div>
-  </div>
-  <div class="metrics" style="margin-top:12px">
-    <div class="metric"><div class="label">Sharpe Ratio</div><div class="value" id="vSharpe">--</div></div>
-    <div class="metric"><div class="label">最大回撤</div><div class="value" id="vDrawdown">--</div></div>
-  </div>
-</div>
-
-<!-- ═══ Trades ═══ -->
-<div class="section" id="trades">
-  <div class="section-title">📋 交易记录</div>
-  <div class="card">
-    <div class="filters">
-      <label>交易对</label>
-      <select id="fSymbol" onchange="fetchTrades(1)"><option value="">全部</option></select>
-      <label>方向</label>
-      <select id="fSide" onchange="fetchTrades(1)"><option value="">全部</option><option value="buy">买入</option><option value="sell">卖出</option></select>
-    </div>
-    <div id="tradesTable"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
-    <div class="pagination" id="tradesPagination"></div>
-  </div>
-</div>
-
-<!-- ═══ Backtest ═══ -->
-<div class="section" id="backtest">
-  <div class="section-title">🧪 回测</div>
-  <div class="card">
-    <form id="btForm" onsubmit="runBacktest(event)">
-      <div class="filters" style="margin-bottom:10px">
-        <button class="btn" type="button" onclick="loadBtFromInstance()">📌 从实例加载参数</button>
-        <button class="btn btn-accent" type="button" onclick="runCompareBacktest()">⚔️ 多策略对比回测</button>
-      </div>
-      <div class="form-grid">
-        <div><label>交易对</label><input id="btSymbol" value="$default_symbol"></div>
-        <div><label>策略</label>
-          <select id="btStrategy" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text)">
-            <option value="ma_crossover">MA交叉</option><option value="rsi">RSI</option>
-            <option value="bollinger">布林带</option><option value="macd">MACD</option>
-          </select>
-        </div>
-        <div><label>时间框架</label><input id="btTF" value="$default_tf"></div>
-        <div><label>天数</label><input id="btDays" type="number" value="30"></div>
-        <div><label>快线</label><input id="btFast" type="number" value="$default_fast"></div>
-        <div><label>慢线</label><input id="btSlow" type="number" value="$default_slow"></div>
-        <div><label>RSI周期</label><input id="btRsiP" type="number" value="14"></div>
-        <div><label>RSI买/卖阈值</label><input id="btRsiBS" value="30,70"></div>
-        <div><label>布林周期</label><input id="btBollP" type="number" value="20"></div>
-        <div><label>布林标准差</label><input id="btBollS" type="number" step="0.1" value="2.0"></div>
-      </div>
-      <div style="margin-top:12px"><button class="btn btn-primary" type="submit" id="btRun">🚀 运行回测</button></div>
-    </form>
-    <div id="btResult" style="margin-top:16px;display:none">
-      <div class="metrics" id="btMetrics"></div>
-      <div class="card" style="margin-top:12px">
-        <div class="chart-container"><canvas id="btChart"></canvas></div>
-      </div>
-      <div class="card" style="margin-top:12px">
-        <div class="section-title" style="font-size:15px">📋 回测交易明细</div>
-        <div id="btTradesTable" style="max-height:400px;overflow-y:auto"></div>
-      </div>
-    </div>
-    <div id="btCompareResult" style="margin-top:16px;display:none">
-      <div class="section-title" style="font-size:15px">⚔️ 多策略回测对比</div>
-      <div id="btCompareTable"></div>
-      <div class="card" style="margin-top:12px">
-        <div class="chart-container"><canvas id="btCompareChart"></canvas></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ Grid ═══ -->
-<div class="section" id="grid">
-  <div class="section-title">🔲 网格策略</div>
-  <div class="card"><div id="gridArea"><div class="loading"><div class="spinner"></div> 加载中...</div></div></div>
-</div>
-
-<!-- ═══ K-Line ═══ -->
-<div class="section" id="kline">
-  <div class="section-title">📈 K线图</div>
-  <div class="card">
-    <div class="filters">
-      <label>交易对</label>
-      <select id="kSymbol" onchange="loadKlines()"><option value="BTC/USDT">BTC/USDT</option><option value="ETH/USDT">ETH/USDT</option></select>
-      <label>周期</label>
-      <select id="kTF" onchange="loadKlines()">
-        <option value="1m">1分钟</option><option value="5m">5分钟</option><option value="15m">15分钟</option>
-        <option value="1h" selected>1小时</option><option value="4h">4小时</option><option value="1d">1天</option>
-      </select>
-      <label>天数</label>
-      <select id="kDays" onchange="loadKlines()">
-        <option value="1">1天</option><option value="3">3天</option><option value="7" selected>7天</option>
-        <option value="14">14天</option><option value="30">30天</option>
-      </select>
-      <button class="btn" onclick="loadKlines()">🔄 刷新</button>
-    </div>
-    <div id="klineChart" style="width:100%;height:420px;margin-top:8px"></div>
-    <div class="loading" id="klineLoading"><div class="spinner"></div> 加载中...</div>
-    <div id="klineInfo" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
-  </div>
-</div>
-
-<!-- ═══ Operations ═══ -->
-<div class="section" id="ops">
-  <div class="section-title">🎮 操作中心</div>
-  <p style="font-size:13px;color:var(--muted);margin-bottom:12px">所有 CLI 命令均可在此执行。</p>
-  <div class="ops-grid">
-    <div class="ops-card" onclick="opsRunOnce()"><div class="ops-icon">⚡</div><div class="ops-label">运行一次</div><div class="ops-desc">执行一次策略检查 (CLI: once)</div></div>
-    <div class="ops-card" onclick="opsStartBot()"><div class="ops-icon">▶️</div><div class="ops-label">启动机器人</div><div class="ops-desc">启动连续交易 (CLI: run)</div></div>
-    <div class="ops-card" onclick="opsRestartBot()"><div class="ops-icon">🔄</div><div class="ops-label">重启机器人</div><div class="ops-desc">重启交易服务</div></div>
-    <div class="ops-card" onclick="opsStopBot()"><div class="ops-icon">⛔</div><div class="ops-label">停止机器人</div><div class="ops-desc">停止交易服务</div></div>
-    <div class="ops-card" onclick="opsViewStats()"><div class="ops-icon">📊</div><div class="ops-label">查看统计</div><div class="ops-desc">CLI: stats</div></div>
-    <div class="ops-card" onclick="opsRefreshAll()"><div class="ops-icon">🔃</div><div class="ops-label">刷新全部</div><div class="ops-desc">重新加载所有数据</div></div>
-  </div>
-  <div class="card" style="margin-top:12px">
-    <div class="section-title" style="font-size:15px">🖥️ 命令输出</div>
-    <pre id="opsOutput" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:13px;color:var(--green);max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">等待操作...</pre>
-  </div>
-  <div class="card" style="margin-top:12px">
-    <div class="section-title" style="font-size:15px">🤖 机器人状态</div>
-    <div id="botStatusArea"><div class="loading"><div class="spinner"></div> 检查中...</div></div>
-  </div>
-</div>
-
-<!-- ═══ Instance Modal ═══ -->
-<div id="instanceModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:200;justify-content:center;align-items:center">
-  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;width:90%;max-width:520px;max-height:85vh;overflow-y:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <h3 id="modalTitle" style="color:var(--accent);font-size:16px">编辑策略实例</h3>
-      <button class="btn" onclick="closeModal()" style="padding:4px 10px">✕</button>
-    </div>
-    <div class="form-grid">
-      <div><label>实例名称</label><input id="iName" value=""></div>
-      <div><label>策略</label>
-        <select id="iStrategy" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text)">
-          <option value="ma_crossover">MA交叉</option><option value="rsi">RSI</option>
-          <option value="bollinger">布林带</option><option value="macd">MACD</option>
-        </select>
-      </div>
-      <div><label>交易对 (逗号分隔)</label><input id="iSymbols" value=""></div>
-      <div><label>时间框架</label>
-        <select id="iTF" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text)">
-          <option value="1m">1分钟</option><option value="5m">5分钟</option><option value="15m">15分钟</option>
-          <option value="1h">1小时</option><option value="4h">4小时</option><option value="1d">1天</option>
-        </select>
-      </div>
-      <div><label>快线周期</label><input id="iFast" type="number" value="5"></div>
-      <div><label>慢线周期</label><input id="iSlow" type="number" value="20"></div>
-      <div><label>RSI周期</label><input id="iRsiP" type="number" value="14"></div>
-      <div><label>RSI买入</label><input id="iRsiB" type="number" step="0.1" value="30"></div>
-      <div><label>RSI卖出</label><input id="iRsiS" type="number" step="0.1" value="70"></div>
-      <div><label>布林带周期</label><input id="iBollP" type="number" value="20"></div>
-      <div><label>布林带标准差</label><input id="iBollS" type="number" step="0.1" value="2.0"></div>
-      <div><label>每单金额 (USDT)</label><input id="iOrder" type="number" value="500"></div>
-      <div><label>止损 %</label><input id="iSL" type="number" step="0.01" value="0.05"></div>
-      <div><label>止盈 %</label><input id="iTP" type="number" step="0.01" value="0.10"></div>
-      <div><label>追踪止损 %</label><input id="iTrail" type="number" step="0.01" value="0"></div>
-      <div><label>第一档止盈 %</label><input id="iTP1" type="number" step="0.01" value="0"></div>
-      <div><label>第一档平仓比例</label><input id="iTP1f" type="number" step="0.1" value="0.5"></div>
-      <div><label>第二档止盈 %</label><input id="iTP2" type="number" step="0.01" value="0"></div>
-      <div><label>第二档平仓比例</label><input id="iTP2f" type="number" step="0.1" value="1.0"></div>
-    </div>
-    <input type="hidden" id="iIdx" value="-1">
-    <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn" onclick="closeModal()">取消</button>
-      <button class="btn btn-primary" onclick="saveInstance()">保存</button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ Settings ═══ -->
-<div class="section" id="settings">
-  <div class="section-title">⚙️ 设置</div>
-  <div class="card">
-    <div id="settingsForm"><div class="loading"><div class="spinner"></div> 加载中...</div></div>
-    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <button class="btn btn-primary" id="saveConfigBtn" onclick="saveConfig()" disabled>💾 保存设置</button>
-      <span id="saveStatus" style="font-size:13px;color:var(--muted)"></span>
-    </div>
-  </div>
-</div>
-
-<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">
-  OKX Paper Trading Bot v3 &mdash; <span id="sseStatus">连接中...</span>
-</div>
-
-<script src="/static/js/dashboard.js"></script>
-</body></html>
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OKX Paper Bot Strategy Cockpit</title><style>$css</style><script src="/static/js/chart.js"></script><script src="/static/js/lightweight-charts.js"></script></head><body>
+<nav class="topbar"><div class="brand">🤖 OKX Paper Bot<small>OctoBot-style bot control center</small></div><a href="#overview" class="active" data-nav>总览</a><a href="#strategies" data-nav>策略看板</a><a href="#compare" data-nav>策略对比</a><a href="#backtest" data-nav>回测实验室</a><a href="#trades" data-nav>交易</a><a href="#market" data-nav>行情</a><a href="#ops" data-nav>操作</a><a href="#settings" data-nav>设置</a></nav>
+<div class="error-msg" id="errorBox"></div><div class="success-msg" id="successBox"></div><main class="wrap">
+<section class="hero" id="overview"><div class="card"><h2 class="section-title">📊 账户总览</h2><p class="sub">统一账户、独立策略实例、实时运行状态集中展示。</p><div class="metrics"><div class="metric"><div class="label">余额 USDT</div><div class="value" id="vBalance">--</div></div><div class="metric"><div class="label">持仓价值</div><div class="value" id="vPosValue">--</div></div><div class="metric"><div class="label">账户总值</div><div class="value" id="vEquity">--</div></div><div class="metric"><div class="label">总收益</div><div class="value" id="vReturn">--</div></div><div class="metric"><div class="label">策略实例</div><div class="value" id="vStratCount">--</div></div><div class="metric"><div class="label">总交易</div><div class="value" id="vTrades">--</div></div></div></div><div class="card"><h2 class="section-title">🤖 运行状态</h2><div id="botStatusArea"><div class="loading"><div class="spinner"></div>检查中...</div></div><h2 class="section-title" style="margin-top:12px">📦 持仓明细</h2><div id="positionsArea"><div class="loading"><div class="spinner"></div>加载中...</div></div></div></section>
+<section class="section" id="strategies"><h2 class="section-title">🎯 每个策略的独立看板</h2><p class="sub">每张卡片就是一个策略实例；点击后查看该策略的权益、持仓、交易、参数和快捷回测。</p><div class="strategy-grid" id="instCardsArea"><div class="loading"><div class="spinner"></div>加载中...</div></div><div class="actions" style="margin-top:12px"><button class="btn btn-primary" onclick="addInstance()">➕ 新增实例</button><button class="btn" onclick="loadAll()">🔄 刷新全部</button> <button class="btn btn-danger" onclick="resetAllStrategies()">🗑️ 重置全部策略</button></div><div class="detail-panel card" id="instDetailPanel" style="margin-top:14px"><div class="detail-head"><div><h2 class="section-title" id="detailName">--</h2><div class="sub" id="detailSub">--</div></div><button class="btn" onclick="closeDetail()">✕ 关闭</button></div><div class="metrics" id="detailMetrics"></div><div class="tabs"><button class="tab active" data-detail-tab="equity">权益曲线</button><button class="tab" data-detail-tab="trades">交易明细</button><button class="tab" data-detail-tab="positions">持仓/参数</button></div><div id="detailTabEquity"><div class="chart-container"><canvas id="detailEquityChart"></canvas></div><div class="loading" id="detailEqLoading"><div class="spinner"></div>加载中...</div></div><div id="detailTabTrades" style="display:none"><div id="detailTradesArea"></div></div><div id="detailTabPositions" style="display:none"><div class="grid grid-2"><div class="card"><h3 class="section-title" style="font-size:15px">当前持仓</h3><div id="detailPositionsArea"></div></div><div class="card"><h3 class="section-title" style="font-size:15px">策略参数</h3><div id="detailConfigArea"></div></div></div></div></div></section>
+<section class="section grid grid-2" id="compare"><div class="card"><h2 class="section-title">⚖️ 实盘策略对比看板</h2><p class="sub">按照实例独立统计交易数、胜率、盈亏比、PnL、权益和回撤。</p><div id="compareArea"><div class="loading"><div class="spinner"></div>加载中...</div></div></div><div class="card"><h2 class="section-title">📊 PnL / 胜率 / 回撤</h2><div class="chart-container"><canvas id="compareChart"></canvas></div></div></section>
+<section class="section" id="backtest"><div class="card"><h2 class="section-title">🧪 回测实验室</h2><p class="sub">参考 OctoBot 的模块化机器人控制台：单策略回测、策略类型对比、已配置实例批量对比；尽量复用同一组K线，减少重复请求。</p><form id="btForm" onsubmit="runBacktest(event)"><div class="filters"><label>实例参数</label><select id="btInstance"><option value="">手动参数</option></select><button class="btn" type="button" onclick="loadBtFromInstance()">📌 载入实例</button><button class="btn btn-accent" type="button" onclick="runCompareBacktest()">⚔️ 策略类型对比</button><button class="btn btn-primary" type="button" onclick="runInstanceBacktestCompare()">🧬 已配置实例对比</button></div><div class="form-grid" style="margin-top:12px"><div><label>交易对</label><input id="btSymbol" value="$default_symbol"></div><div><label>策略</label><select id="btStrategy"><option value="ma_crossover">MA交叉</option><option value="rsi">RSI</option><option value="bollinger">布林带</option><option value="macd">MACD</option></select></div><div><label>时间框架</label><input id="btTF" value="$default_tf"></div><div><label>天数</label><input id="btDays" type="number" value="30"></div><div><label>快线</label><input id="btFast" type="number" value="$default_fast"></div><div><label>慢线</label><input id="btSlow" type="number" value="$default_slow"></div><div><label>RSI周期</label><input id="btRsiP" type="number" value="14"></div><div><label>RSI买/卖阈值</label><input id="btRsiBS" value="30,70"></div><div><label>布林周期</label><input id="btBollP" type="number" value="20"></div><div><label>布林标准差</label><input id="btBollS" type="number" step="0.1" value="2.0"></div></div><div class="actions" style="margin-top:12px"><button class="btn btn-primary" type="submit" id="btRun">🚀 运行单策略回测</button></div></form><div id="btResult" style="display:none;margin-top:16px"><div class="metrics" id="btMetrics"></div><div class="chart-container"><canvas id="btChart"></canvas></div><div id="btTradesTable"></div></div><div id="btCompareResult" style="display:none;margin-top:16px"><h3 class="section-title" style="font-size:15px">⚔️ 回测对比结果</h3><div id="btCompareTable"></div><div class="chart-container"><canvas id="btCompareChart"></canvas></div></div></div></section>
+<section class="section" id="trades"><div class="card"><h2 class="section-title">📋 交易流水</h2><div class="filters"><label>实例</label><select id="fInstance" onchange="fetchTrades(1)"><option value="">全部实例</option></select><label>交易对</label><select id="fSymbol" onchange="fetchTrades(1)"><option value="">全部</option></select><label>方向</label><select id="fSide" onchange="fetchTrades(1)"><option value="">全部</option><option value="buy">买入</option><option value="sell">卖出</option><option value="stop_loss">止损</option><option value="take_profit">止盈</option><option value="trailing_stop">追踪止损</option><option value="partial_tp">部分止盈</option></select></div><div id="tradesTable" style="margin-top:12px"></div><div class="pagination" id="tradesPagination"></div></div></section>
+<section class="section grid grid-2" id="market"><div class="card"><h2 class="section-title">📈 K线图</h2><div class="filters"><label>交易对</label><select id="kSymbol" onchange="loadKlines()"><option value="BTC/USDT">BTC/USDT</option><option value="ETH/USDT">ETH/USDT</option></select><label>周期</label><select id="kTF" onchange="loadKlines()"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option></select><label>天数</label><select id="kDays" onchange="loadKlines()"><option value="1">1天</option><option value="3">3天</option><option value="7" selected>7天</option><option value="14">14天</option><option value="30">30天</option></select><button class="btn" onclick="loadKlines()">🔄</button></div><div id="klineChart" style="width:100%;height:420px;margin-top:8px"></div><div class="loading" id="klineLoading"><div class="spinner"></div>加载中...</div><div id="klineInfo" class="sub"></div></div><div class="card"><h2 class="section-title">🔲 网格策略</h2><div id="gridArea"><div class="loading"><div class="spinner"></div>加载中...</div></div></div></section>
+<section class="section" id="ops"><div class="card"><h2 class="section-title">🎮 操作中心</h2><div class="ops-grid"><div class="ops-card" onclick="opsRunOnce()">⚡<b> 运行一次</b><div class="sub">CLI once</div></div><div class="ops-card" onclick="opsStartBot()">▶️<b> 启动机器人</b></div><div class="ops-card" onclick="opsRestartBot()">🔄<b> 重启机器人</b></div><div class="ops-card" onclick="opsStopBot()">⛔<b> 停止机器人</b></div><div class="ops-card" onclick="opsViewStats()">📊<b> 查看统计</b></div><div class="ops-card" onclick="opsRefreshAll()">🔃<b> 刷新全部</b></div></div><pre id="opsOutput" style="background:#0b1018;border:1px solid var(--border);border-radius:12px;padding:12px;max-height:360px;overflow:auto;white-space:pre-wrap;margin-top:12px">等待操作...</pre></div></section>
+<section class="section" id="settings"><div class="card"><h2 class="section-title">⚙️ 设置</h2><div id="settingsForm"><div class="loading"><div class="spinner"></div>加载中...</div></div><div class="actions" style="margin-top:12px"><button class="btn btn-primary" id="saveConfigBtn" onclick="saveConfig()" disabled>💾 保存设置</button> <button class="btn btn-danger" onclick="resetSettings()">🔄 重置设置</button><span id="saveStatus" class="sub"></span></div></div></section>
+<div class="modal" id="instanceModal"><div class="modal-box"><div class="detail-head"><h3 id="modalTitle">编辑策略实例</h3><button class="btn" onclick="closeModal()">✕</button></div><div class="form-grid"><div><label>实例名称</label><input id="iName"></div><div><label>策略</label><select id="iStrategy"><option value="ma_crossover">MA交叉</option><option value="rsi">RSI</option><option value="bollinger">布林带</option><option value="macd">MACD</option></select></div><div><label>交易对</label><input id="iSymbols"></div><div><label>时间框架</label><select id="iTF"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select></div><div><label>快线</label><input id="iFast" type="number"></div><div><label>慢线</label><input id="iSlow" type="number"></div><div><label>RSI周期</label><input id="iRsiP" type="number"></div><div><label>RSI买入</label><input id="iRsiB" type="number" step="0.1"></div><div><label>RSI卖出</label><input id="iRsiS" type="number" step="0.1"></div><div><label>布林周期</label><input id="iBollP" type="number"></div><div><label>布林标准差</label><input id="iBollS" type="number" step="0.1"></div><div><label>每单金额</label><input id="iOrder" type="number"></div><div><label>分配权益(USDT)</label><input id="iEquity" type="number" step="100" placeholder="0=使用全局余额"></div><div><label>止损%</label><input id="iSL" type="number" step="0.01"></div><div><label>止盈%</label><input id="iTP" type="number" step="0.01"></div><div><label>追踪止损%</label><input id="iTrail" type="number" step="0.01"></div><div><label>TP1%</label><input id="iTP1" type="number" step="0.01"></div><div><label>TP1比例</label><input id="iTP1f" type="number" step="0.1"></div><div><label>TP2%</label><input id="iTP2" type="number" step="0.01"></div><div><label>TP2比例</label><input id="iTP2f" type="number" step="0.1"></div></div><input type="hidden" id="iIdx" value="-1"><div class="actions" style="justify-content:flex-end;margin-top:16px"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveInstance()">保存</button></div></div></div>
+<footer style="text-align:center;color:var(--muted);font-size:12px;padding:20px">OKX Paper Trading Bot Dashboard v5 · <span id="sseStatus">连接中...</span></footer></main><script src="/static/js/dashboard.js?v=1779111804"></script></body></html>
 """)
 
 
@@ -443,30 +84,161 @@ def _get_grid_state_file(config):
     return config.db_path.parent / "grid_state.json"
 
 
+EXIT_SIDES = {"sell", "stop_loss", "take_profit", "trailing_stop", "partial_tp"}
+
+
+def _trade_instance_name(trade: dict, instances=None) -> str:
+    """Return the canonical instance name for a trade.
+
+    New trades store instance_name directly. Old rows are backfilled by matching
+    symbol to configured instances so legacy data still appears in per-strategy
+    dashboards.
+    """
+    name = (trade.get("instance_name") or "").strip()
+    if name:
+        return name
+    if instances:
+        matches = [i.name for i in instances if trade.get("symbol") in i.symbols]
+        if len(matches) == 1:
+            return matches[0]
+    return "legacy"
+
+
+def _trade_strategy_name(trade: dict, instances=None) -> str:
+    strategy = (trade.get("strategy_name") or "").strip()
+    if strategy:
+        return strategy
+    inst_name = _trade_instance_name(trade, instances)
+    if instances:
+        inst = next((i for i in instances if i.name == inst_name), None)
+        if inst:
+            return inst.strategy
+    return ""
+
+
 def _compute_pnl_map(trades):
+    """FIFO realized PnL per row, isolated by (instance, symbol)."""
+    instances = load_strategy_instances()
     open_positions = {}
     pnl_map = {}
     for i, t in enumerate(trades):
-        sym = t["symbol"]
-        if t["side"] == "buy":
-            open_positions.setdefault(sym, []).append((i, t["amount"], t["price"]))
+        inst = _trade_instance_name(t, instances)
+        key = (inst, t["symbol"])
+        side = t.get("side", "")
+        if side == "buy":
+            open_positions.setdefault(key, []).append([t["amount"], t["price"]])
             pnl_map[i] = None
         else:
-            pnl_map[i] = 0.0
+            pnl = 0.0
             remaining = t["amount"]
             sell_price = t["price"]
-            while remaining > 1e-12 and open_positions.get(sym):
-                idx, buy_amt, buy_price = open_positions[sym][0]
+            while remaining > 1e-12 and open_positions.get(key):
+                buy_amt, buy_price = open_positions[key][0]
                 matched = min(remaining, buy_amt)
-                pnl_map[i] = pnl_map.get(i, 0.0) + matched * (sell_price - buy_price)
+                pnl += matched * (sell_price - buy_price)
                 remaining -= matched
                 if matched >= buy_amt - 1e-12:
-                    open_positions[sym].pop(0)
+                    open_positions[key].pop(0)
                 else:
-                    open_positions[sym][0] = (idx, buy_amt - matched, buy_price)
-            if abs(remaining) > 1e-12:
-                pnl_map[i] = pnl_map.get(i, 0.0)
+                    open_positions[key][0] = [buy_amt - matched, buy_price]
+            pnl_map[i] = pnl
     return pnl_map
+
+
+def _decorate_trades(trades: list[dict]) -> list[dict]:
+    instances = load_strategy_instances()
+    pnl_map = _compute_pnl_map(trades)
+    out = []
+    for i, t in enumerate(trades):
+        row = dict(t)
+        row["instance_name"] = _trade_instance_name(row, instances)
+        row["strategy_name"] = _trade_strategy_name(row, instances)
+        row["pnl"] = pnl_map.get(i)
+        try:
+            row["ts_text"] = datetime.fromtimestamp(float(row.get("ts", 0)), tz=BJT).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, OSError):
+            row["ts_text"] = str(row.get("ts", ""))
+        out.append(row)
+    return out
+
+
+def _stats_from_decorated(trades: list[dict]) -> dict:
+    pnl_list = [float(t["pnl"]) for t in trades if t.get("pnl") is not None]
+    exits = [t for t in trades if t.get("pnl") is not None]
+    total_trades = len(pnl_list)
+    winning = [p for p in pnl_list if p > 0]
+    losing = [p for p in pnl_list if p <= 0]
+    gross_profit = sum(winning)
+    gross_loss = abs(sum(losing))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
+    total_pnl = sum(pnl_list)
+    avg_pnl = total_pnl / total_trades if total_trades else 0.0
+    best = max(pnl_list) if pnl_list else 0.0
+    worst = min(pnl_list) if pnl_list else 0.0
+    buys = sum(1 for t in trades if t.get("side") == "buy")
+    sells = sum(1 for t in trades if t.get("side") != "buy")
+    return {
+        "total_trades": total_trades,
+        "raw_trades": len(trades),
+        "buy_count": buys,
+        "sell_count": sells,
+        "winning_trades": len(winning),
+        "losing_trades": len(losing),
+        "win_rate": round(len(winning) / total_trades, 4) if total_trades else 0.0,
+        "avg_win": round(sum(winning) / len(winning), 2) if winning else 0.0,
+        "avg_loss": round(sum(losing) / len(losing), 2) if losing else 0.0,
+        "avg_pnl": round(avg_pnl, 2),
+        "best_trade": round(best, 2),
+        "worst_trade": round(worst, 2),
+        "profit_factor": round(profit_factor, 2),
+        "total_pnl": round(total_pnl, 2),
+    }
+
+
+def _positions_from_trades(trades: list[dict]) -> tuple[float, dict[str, float], dict[str, float]]:
+    balance_delta = 0.0
+    positions: dict[str, float] = {}
+    prices: dict[str, float] = {}
+    for t in trades:
+        sym = t["symbol"]; amount = float(t["amount"]); price = float(t["price"])
+        prices[sym] = price
+        if t.get("side") == "buy":
+            balance_delta -= amount * price
+            positions[sym] = positions.get(sym, 0.0) + amount
+        else:
+            balance_delta += amount * price
+            positions[sym] = positions.get(sym, 0.0) - amount
+    positions = {s: a for s, a in positions.items() if a > 1e-12}
+    return balance_delta, positions, prices
+
+
+def _equity_from_trades(config, trades: list[dict]) -> dict:
+    decorated = _decorate_trades(trades)
+    balance = config.initial_balance_usdt
+    positions: dict[str, float] = {}
+    prices: dict[str, float] = {}
+    history = []
+    for t in decorated:
+        sym = t["symbol"]; amount = float(t["amount"]); price = float(t["price"])
+        prices[sym] = price
+        if t.get("side") == "buy":
+            balance -= amount * price
+            positions[sym] = positions.get(sym, 0.0) + amount
+        else:
+            balance += amount * price
+            positions[sym] = positions.get(sym, 0.0) - amount
+        positions = {s: a for s, a in positions.items() if a > 1e-12}
+        pos_value = sum(a * prices.get(s, 0.0) for s, a in positions.items())
+        total = balance + pos_value
+        history.append({"timestamp": t.get("ts_text", t.get("ts", "")), "balance_usdt": round(balance, 2), "positions_value": round(pos_value, 2), "total_equity": round(total, 2), "pnl": round(total - config.initial_balance_usdt, 2), "pnl_pct": round((total - config.initial_balance_usdt) / config.initial_balance_usdt * 100, 4)})
+    equities = [h["total_equity"] for h in history]
+    peak = equities[0] if equities else config.initial_balance_usdt
+    max_dd = 0.0
+    for e in equities:
+        peak = max(peak, e)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - e) / peak)
+    return {"history": history, "sharpe": 0.0, "max_drawdown": round(max_dd, 4)}
 
 
 def _build_api_status(config):
@@ -510,22 +282,23 @@ def _build_api_status(config):
     return {"time": datetime.now(BJT).isoformat(), "balance": round(balance, 2), "positions_value": round(pos_value, 2), "total_equity": round(total, 2), "return_pct": round(ret_pct, 2), "initial_balance": config.initial_balance_usdt, "strategy": config.strategy_name, "positions": pos_list, "trades_count": len(trades), "instance_count": len(instances)}
 
 
-def _build_api_trades(config, symbol=None, side=None, symbols_multi=None, page=1, per_page=20):
+def _build_api_trades(config, symbol=None, side=None, symbols_multi=None, instance=None, strategy=None, page=1, per_page=20):
     store = TradeStore(config.db_path)
-    all_trades = store.list_trades()
-    pnl_map = _compute_pnl_map(all_trades)
-    for i, t in enumerate(all_trades): t["pnl"] = pnl_map.get(i)
+    all_trades = _decorate_trades(store.list_trades())
     filtered = all_trades
     if symbol: filtered = [t for t in filtered if t["symbol"] == symbol]
     elif symbols_multi:
         sym_set = set(s.strip() for s in symbols_multi.split(",") if s.strip())
         filtered = [t for t in filtered if t["symbol"] in sym_set]
+    if instance: filtered = [t for t in filtered if t.get("instance_name") == instance]
+    if strategy: filtered = [t for t in filtered if t.get("strategy_name") == strategy]
     if side: filtered = [t for t in filtered if t["side"] == side]
     total = len(filtered)
     total_pages = math.ceil(total / per_page) if total > 0 else 0
     page = max(1, min(page, max(total_pages, 1)))
     start = (page - 1) * per_page
-    return {"trades": filtered[start:start + per_page], "total": total, "page": page, "pages": total_pages}
+    page_rows = list(reversed(filtered))[start:start + per_page]
+    return {"trades": page_rows, "total": total, "page": page, "pages": total_pages}
 
 
 def _build_api_equity(equity_file, symbols_multi=None, store=None):
@@ -568,32 +341,33 @@ def _build_api_equity(equity_file, symbols_multi=None, store=None):
     return {"history": history, "sharpe": tracker.sharpe_ratio(), "max_drawdown": tracker.max_drawdown()}
 
 
-def _build_api_stats(config, symbols_multi=None):
+def _build_api_stats(config, symbols_multi=None, instance=None, strategy=None):
     store = TradeStore(config.db_path)
-    trades = store.list_trades()
+    trades = _decorate_trades(store.list_trades())
     if symbols_multi:
         sym_set = set(s.strip() for s in symbols_multi.split(",") if s.strip())
         trades = [t for t in trades if t["symbol"] in sym_set]
-    pnl_list = []; open_positions = {}
-    for t in trades:
-        sym = t["symbol"]
-        if t["side"] == "buy": open_positions.setdefault(sym, []).append(t)
-        elif t["side"] in ("sell", "stop_loss", "take_profit", "trailing_stop", "partial_tp"):
-            if open_positions.get(sym):
-                buy = open_positions[sym].pop(0)
-                pnl_list.append((t["price"] - buy["price"]) * t["amount"])
-    total_trades = len(pnl_list)
-    winning = [p for p in pnl_list if p > 0]; losing = [p for p in pnl_list if p <= 0]
-    win_rate = len(winning) / total_trades if total_trades > 0 else 0.0
-    avg_win = sum(winning) / len(winning) if winning else 0.0
-    avg_loss = sum(losing) / len(losing) if losing else 0.0
-    gross_profit = sum(winning); gross_loss = abs(sum(losing))
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0.0
-    return {"total_trades": total_trades, "winning_trades": len(winning), "losing_trades": len(losing), "win_rate": round(win_rate, 4), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "profit_factor": round(profit_factor, 2), "total_pnl": round(sum(pnl_list), 2)}
+    if instance:
+        trades = [t for t in trades if t.get("instance_name") == instance]
+    if strategy:
+        trades = [t for t in trades if t.get("strategy_name") == strategy]
+    return _stats_from_decorated(trades)
 
 
 def _build_api_config(config):
-    return {"symbols": config.all_symbols, "strategy": config.strategy_name, "timeframe": config.timeframe, "demo": config.okx_demo, "fast_window": config.fast_window, "slow_window": config.slow_window, "rsi_period": config.rsi_period, "rsi_buy": config.rsi_buy, "rsi_sell": config.rsi_sell, "bollinger_period": config.bollinger_period, "bollinger_std": config.bollinger_std, "initial_balance": config.initial_balance_usdt, "order_usdt": config.order_usdt, "max_position_fraction": config.max_position_fraction, "fee_pct": config.fee_pct, "slippage_pct": config.slippage_pct, "stop_loss_pct": config.stop_loss_pct, "take_profit_pct": config.take_profit_pct, "trailing_stop_pct": config.trailing_stop_pct, "tp1_pct": config.tp1_pct, "tp1_fraction": config.tp1_fraction, "tp2_pct": config.tp2_pct, "tp2_fraction": config.tp2_fraction, "loop_interval_seconds": config.loop_interval_seconds}
+    # 只返回通用参数，策略特定参数由 strategies.json 中的实例管理
+    return {
+        "symbols": config.all_symbols, "demo": config.okx_demo,
+        "initial_balance": config.initial_balance_usdt,
+        "order_usdt": config.order_usdt, "max_position_fraction": config.max_position_fraction,
+        "fee_pct": config.fee_pct, "slippage_pct": config.slippage_pct,
+        "loop_interval_seconds": config.loop_interval_seconds,
+        # OKX API (masked for security)
+        "okx_api_key": config.api_key or "",
+        "okx_api_secret": "***" if config.secret else "",
+        "okx_api_password": "***" if config.password else "",
+        "okx_demo": config.okx_demo,
+    }
 
 
 def _build_backtest_result_json(result):
@@ -621,53 +395,140 @@ def _build_api_grid(config):
     return _normalize_grid_payload(json.loads(grid_file.read_text()), enabled=True)
 
 
-def _build_api_instance_stats(config):
+def _instance_initial_balance(config, inst=None) -> float:
+    """Approximate capital allocated to one strategy instance."""
     instances = load_strategy_instances()
-    if not instances: return {"instances": [_build_api_stats(config)]}
+    if inst is None or not instances:
+        return float(config.initial_balance_usdt)
+    return float(config.initial_balance_usdt) / max(len(instances), 1)
+
+
+def _position_rows_from_trades(trades: list[dict]) -> tuple[float, list[dict]]:
+    """Return cash delta and open positions reconstructed from the supplied rows."""
+    cash_delta, positions, prices = _positions_from_trades(trades)
+    rows = []
+    for sym, amount in sorted(positions.items()):
+        price = float(prices.get(sym, 0.0))
+        rows.append({"symbol": sym, "amount": round(amount, 8), "price": round(price, 6), "value": round(amount * price, 2)})
+    return cash_delta, rows
+
+
+def _equity_history_for_decorated(config, trades: list[dict], initial_balance: float | None = None) -> dict:
+    """Build an equity curve from already-filtered decorated trades."""
+    initial = float(initial_balance if initial_balance is not None else config.initial_balance_usdt)
+    balance = initial
+    positions: dict[str, float] = {}
+    prices: dict[str, float] = {}
+    history = [{"timestamp": "初始", "balance_usdt": round(balance, 2), "positions_value": 0.0, "total_equity": round(initial, 2), "pnl": 0.0, "pnl_pct": 0.0}]
+    for t in sorted(trades, key=lambda x: (float(x.get("ts") or 0), int(x.get("id") or 0))):
+        sym = t["symbol"]; amount = float(t["amount"]); price = float(t["price"])
+        prices[sym] = price
+        if t.get("side") == "buy":
+            balance -= amount * price
+            positions[sym] = positions.get(sym, 0.0) + amount
+        else:
+            balance += amount * price
+            positions[sym] = positions.get(sym, 0.0) - amount
+        positions = {s: a for s, a in positions.items() if a > 1e-12}
+        pos_value = sum(a * prices.get(s, 0.0) for s, a in positions.items())
+        total = balance + pos_value
+        history.append({"timestamp": t.get("ts_text", t.get("ts", "")), "balance_usdt": round(balance, 2), "positions_value": round(pos_value, 2), "total_equity": round(total, 2), "pnl": round(total - initial, 2), "pnl_pct": round((total - initial) / initial * 100, 4) if initial else 0.0})
+    equities = [h["total_equity"] for h in history]
+    peak = equities[0] if equities else initial
+    max_dd = 0.0
+    for e in equities:
+        peak = max(peak, e)
+        max_dd = max(max_dd, (peak - e) / peak if peak else 0.0)
+    return {"history": history, "sharpe": 0.0, "max_drawdown": round(max_dd, 4)}
+
+
+def _summarize_scope(config, trades: list[dict], initial_balance: float | None = None) -> dict:
+    """Common stats/positions/equity summary for account, strategy, or instance scope."""
+    initial = float(initial_balance if initial_balance is not None else config.initial_balance_usdt)
+    stats = _stats_from_decorated(trades)
+    cash_delta, positions = _position_rows_from_trades(trades)
+    pos_value = sum(p["value"] for p in positions)
+    balance = initial + cash_delta
+    total_equity = balance + pos_value
+    equity = _equity_history_for_decorated(config, trades, initial)
+    stats.update({
+        "balance": round(balance, 2),
+        "positions_value": round(pos_value, 2),
+        "total_equity": round(total_equity, 2),
+        "return_pct": round((total_equity - initial) / initial * 100, 4) if initial else 0.0,
+        "initial_balance": round(initial, 2),
+        "positions": positions,
+        "max_drawdown": equity["max_drawdown"],
+    })
+    return {"stats": stats, "equity": equity}
+
+
+def _build_api_instance_stats(config):
+    """Return accurate per-instance dashboard rows grouped by canonical instance_name."""
+    instances = load_strategy_instances()
     store = TradeStore(config.db_path)
-    all_trades = store.list_trades()
-    pnl_map = _compute_pnl_map(all_trades)
-    sym_to_inst = {}
-    for inst in instances:
-        for s in inst.symbols: sym_to_inst[s] = inst.name
-    inst_trades = {}
-    for i, t in enumerate(all_trades):
-        inst_name = sym_to_inst.get(t["symbol"], "unknown")
-        inst_trades.setdefault(inst_name, []).append((t, pnl_map.get(i)))
+    decorated = _decorate_trades(store.list_trades())
+    if not instances:
+        summary = _summarize_scope(config, decorated)["stats"]
+        summary.update({"name": "default", "strategy": config.strategy_name, "symbols": config.all_symbols, "timeframe": config.timeframe})
+        return {"instances": [summary]}
     results = []
     for inst in instances:
-        trades_with_pnl = inst_trades.get(inst.name, [])
-        pnl_list = [pnl for _, pnl in trades_with_pnl if pnl is not None]
-        total_trades = len(pnl_list)
-        winning = [p for p in pnl_list if p > 0]; losing = [p for p in pnl_list if p <= 0]
-        win_rate = len(winning) / total_trades if total_trades > 0 else 0
-        avg_win = sum(winning) / len(winning) if winning else 0; avg_loss = sum(losing) / len(losing) if losing else 0
-        gross_profit = sum(winning); gross_loss = abs(sum(losing)); profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
-        buy_count = sum(1 for t, _ in trades_with_pnl if t["side"] == "buy"); sell_count = sum(1 for t, _ in trades_with_pnl if t["side"] != "buy")
-        results.append({"name": inst.name, "strategy": inst.strategy, "symbols": inst.symbols, "timeframe": inst.timeframe, "total_trades": total_trades, "buy_count": buy_count, "sell_count": sell_count, "winning_trades": len(winning), "losing_trades": len(losing), "win_rate": round(win_rate, 4), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "profit_factor": round(profit_factor, 2), "total_pnl": round(sum(pnl_list), 2)})
+        rows = [t for t in decorated if t.get("instance_name") == inst.name]
+        summary = _summarize_scope(config, rows, _instance_initial_balance(config, inst))["stats"]
+        summary.update({"name": inst.name, "strategy": inst.strategy, "symbols": inst.symbols, "timeframe": inst.timeframe})
+        results.append(summary)
     return {"instances": results}
+
+
+def _build_api_strategy_compare(config):
+    store = TradeStore(config.db_path)
+    decorated = _decorate_trades(store.list_trades())
+    strategies = sorted({t.get("strategy_name") or "unknown" for t in decorated} | {i.strategy for i in load_strategy_instances()})
+    results = []
+    for strategy in strategies:
+        rows = [t for t in decorated if (t.get("strategy_name") or "unknown") == strategy]
+        summary = _summarize_scope(config, rows)["stats"]
+        summary.update({"strategy": strategy})
+        results.append(summary)
+    return {"strategies": results}
 
 
 def _build_api_instance_detail(config, name):
     instances = load_strategy_instances()
     inst = next((i for i in instances if i.name == name), None)
-    if not inst: return {"error": f"instance not found: {name}"}
+    if not inst:
+        return {"error": f"instance not found: {name}"}
     store = TradeStore(config.db_path)
-    all_trades = store.list_trades()
-    pnl_map = _compute_pnl_map(all_trades)
-    inst_pnl = {}
-    for i, t in enumerate(all_trades):
-        if t["symbol"] in inst.symbols: inst_pnl[i] = pnl_map.get(i)
-    pnl_list = [p for p in inst_pnl.values() if p is not None]
-    total_trades = len(pnl_list); winning = [p for p in pnl_list if p > 0]; losing = [p for p in pnl_list if p <= 0]
-    win_rate = len(winning) / total_trades if total_trades > 0 else 0
-    avg_win = sum(winning) / len(winning) if winning else 0; avg_loss = sum(losing) / len(losing) if losing else 0
-    gross_profit = sum(winning); gross_loss = abs(sum(losing)); profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
-    equity_data = _build_api_equity(_get_equity_file(config), symbols_multi=",".join(inst.symbols), store=store)
-    for i, t in enumerate(all_trades): t["pnl"] = pnl_map.get(i)
-    inst_trades = [t for t in all_trades if t["symbol"] in inst.symbols]
-    return {"config": {"name": inst.name, "strategy": inst.strategy, "symbols": inst.symbols, "timeframe": inst.timeframe, "order_usdt": inst.order_usdt, "stop_loss_pct": inst.stop_loss_pct, "take_profit_pct": inst.take_profit_pct}, "stats": {"total_trades": total_trades, "winning_trades": len(winning), "losing_trades": len(losing), "win_rate": round(win_rate, 4), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "profit_factor": round(profit_factor, 2), "total_pnl": round(sum(pnl_list), 2)}, "equity": equity_data, "trades": inst_trades[-50:]}
+    decorated = _decorate_trades(store.list_trades())
+    inst_trades = [t for t in decorated if t.get("instance_name") == inst.name]
+    summary = _summarize_scope(config, inst_trades, _instance_initial_balance(config, inst))
+    return {
+        "config": {"name": inst.name, "strategy": inst.strategy, "symbols": inst.symbols, "timeframe": inst.timeframe, "order_usdt": inst.order_usdt, "stop_loss_pct": inst.stop_loss_pct, "take_profit_pct": inst.take_profit_pct, "trailing_stop_pct": inst.trailing_stop_pct, "fast_window": inst.fast_window, "slow_window": inst.slow_window, "rsi_period": inst.rsi_period, "rsi_buy": inst.rsi_buy, "rsi_sell": inst.rsi_sell, "bollinger_period": inst.bollinger_period, "bollinger_std": inst.bollinger_std},
+        "stats": summary["stats"],
+        "equity": summary["equity"],
+        "positions": summary["stats"].get("positions", []),
+        "trades": list(reversed(inst_trades))[:80],
+    }
 
+
+def _build_api_dashboard_v4(config):
+    """Single payload for Dashboard v4: account, per-instance, strategy compare."""
+    store = TradeStore(config.db_path)
+    decorated = _decorate_trades(store.list_trades())
+    account = _summarize_scope(config, decorated)
+    inst_stats = _build_api_instance_stats(config)["instances"]
+    strat_compare = _build_api_strategy_compare(config)["strategies"]
+    return {
+        "version": "v4",
+        "time": datetime.now(BJT).isoformat(),
+        "mode": "demo" if config.okx_demo else "live",
+        "live": _build_api_bot_status(),
+        "account": account,
+        "instances": inst_stats,
+        "strategies": strat_compare,
+        "totals": {"trades_count": len(decorated), "instance_count": len(load_strategy_instances()), "symbols": sorted({t["symbol"] for t in decorated} | set(config.all_symbols))},
+    }
 
 def _build_api_bot_status():
     pids = []
@@ -721,38 +582,58 @@ def _build_api_klines(config, symbol, timeframe, days):
 
 
 def _update_api_config(params):
-    """Save config parameters to .env file. Renamed from _save_config_to_env."""
+    """Save config parameters to .env file."""
     env_path = Path(os.getenv("OKX_BOT_ENV_FILE", ".env"))
-    key_map = {"symbols": "OKX_SYMBOLS", "symbol": "OKX_SYMBOL", "strategy": "STRATEGY", "timeframe": "OKX_TIMEFRAME", "fast_window": "FAST_WINDOW", "slow_window": "SLOW_WINDOW", "rsi_period": "RSI_PERIOD", "rsi_buy": "RSI_BUY", "rsi_sell": "RSI_SELL", "bollinger_period": "BOLLINGER_PERIOD", "bollinger_std": "BOLLINGER_STD", "initial_balance": "INITIAL_BALANCE_USDT", "order_usdt": "ORDER_USDT", "max_position_fraction": "MAX_POSITION_FRACTION", "fee_pct": "FEE_PCT", "slippage_pct": "SLIPPAGE_PCT", "stop_loss_pct": "STOP_LOSS_PCT", "take_profit_pct": "TAKE_PROFIT_PCT", "trailing_stop_pct": "TRAILING_STOP_PCT", "tp1_pct": "TP1_PCT", "tp1_fraction": "TP1_FRACTION", "tp2_pct": "TP2_PCT", "tp2_fraction": "TP2_FRACTION", "loop_interval_seconds": "LOOP_INTERVAL_SECONDS"}
+    key_map = {
+        "symbols": "OKX_SYMBOLS", "symbol": "OKX_SYMBOL",
+        "initial_balance": "INITIAL_BALANCE_USDT",
+        "order_usdt": "ORDER_USDT", "max_position_fraction": "MAX_POSITION_FRACTION",
+        "fee_pct": "FEE_PCT", "slippage_pct": "SLIPPAGE_PCT",
+        "loop_interval_seconds": "LOOP_INTERVAL_SECONDS",
+        "okx_api_key": "OKX_API_KEY", "okx_api_secret": "OKX_API_SECRET",
+        "okx_api_password": "OKX_API_PASSWORD", "okx_demo": "OKX_DEMO",
+    }
+    masked_keys = {'okx_api_secret', 'okx_api_password'}
+    # Read .env once
     lines = env_path.read_text().splitlines() if env_path.exists() else []
     existing = {}
     for line in lines:
         line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1); existing[k.strip()] = v.strip()
-    updated = 0
+        if line and not line.startswith('#') and '=' in line:
+            k, v = line.split('=', 1); existing[k.strip()] = v.strip()
+    # Update from params
     for api_key, val in params.items():
         env_key = key_map.get(api_key)
         if not env_key: continue
+        if api_key in masked_keys and val in ('***', '****', ''):
+            continue  # skip masked/empty secrets
         str_val = str(val)
-        if existing.get(env_key) != str_val: existing[env_key] = str_val; updated += 1
-    out_lines = []; written_keys = set()
-    for line in (env_path.read_text().splitlines() if env_path.exists() else []):
+        existing[env_key] = str_val
+    # Rebuild .env from original lines, updating values
+    out_lines = []
+    written_keys = set()
+    for line in lines:
         stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            k = stripped.split("=", 1)[0].strip()
-            if k in existing: out_lines.append(f"{k}={existing[k]}"); written_keys.add(k)
-            else: out_lines.append(line)
-        else: out_lines.append(line)
+        if stripped and not stripped.startswith('#') and '=' in stripped:
+            k = stripped.split('=', 1)[0].strip()
+            if k in existing:
+                out_lines.append(f'{k}={existing[k]}')
+                written_keys.add(k)
+            else:
+                out_lines.append(line)
+        else:
+            out_lines.append(line)
     for k, v in existing.items():
-        if k not in written_keys: out_lines.append(f"{k}={v}")
-    env_path.write_text("\n".join(out_lines) + "\n")
-    # Return processed config
+        if k not in written_keys:
+            out_lines.append(f'{k}={v}')
+    env_path.write_text(chr(10).join(out_lines) + chr(10))
+    # Update process env
+    for k, v in existing.items():
+        os.environ[k] = v
     result = dict(params)
-    if "symbols" in result and isinstance(result["symbols"], str):
-        result["symbols"] = [s.strip() for s in result["symbols"].split(",") if s.strip()]
+    if 'symbols' in result and isinstance(result['symbols'], str):
+        result['symbols'] = [s.strip() for s in result['symbols'].split(',') if s.strip()]
     return result
-
 
 def _find_bot_pids():
     pids = []
@@ -771,6 +652,85 @@ def _systemctl_bot(action):
     return result.returncode == 0
 
 
+def _reset_settings(config):
+    """Reset all settings to defaults."""
+    env_path = Path(os.getenv("OKX_BOT_ENV_FILE", ".env"))
+    # Default values
+    defaults = {
+        "OKX_SYMBOLS": "BTC/USDT,ETH/USDT",
+        "INITIAL_BALANCE_USDT": "10000",
+        "ORDER_USDT": "500",
+        "MAX_POSITION_FRACTION": "0.25",
+        "FEE_PCT": "0.001",
+        "SLIPPAGE_PCT": "0.0005",
+        "STOP_LOSS_PCT": "0.05",
+        "TAKE_PROFIT_PCT": "0.10",
+        "TRAILING_STOP_PCT": "0.0",
+        "TP1_PCT": "0.0",
+        "TP1_FRACTION": "0.5",
+        "TP2_PCT": "0.0",
+        "TP2_FRACTION": "1.0",
+        "LOOP_INTERVAL_SECONDS": "60",
+        "OKX_DEMO": "true",
+    }
+    # Read existing env to preserve API keys
+    existing = {}
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                existing[k.strip()] = v.strip()
+    # Update with defaults, but keep API keys
+    for k, v in defaults.items():
+        existing[k] = v
+    # Write back
+    lines = [f"{k}={v}" for k, v in existing.items()]
+    env_path.write_text("\n".join(lines) + "\n")
+    return {"status": "ok", "message": "设置已重置为默认值"}
+
+
+def _reset_strategy(instance_name, config):
+    """Reset strategy account state and optionally trades."""
+    data_dir = Path(config.db_path).parent
+    results = []
+    
+    # Delete account state files
+    if instance_name:
+        # Reset specific instance
+        acct_file = data_dir / f"account_{instance_name}.json"
+        if acct_file.exists():
+            acct_file.unlink()
+            results.append(f"已删除 {instance_name} 账户状态")
+        else:
+            results.append(f"{instance_name} 无账户状态文件")
+    else:
+        # Reset all instances
+        for f in data_dir.glob("account_*.json"):
+            f.unlink()
+            results.append(f"已删除 {f.name}")
+    
+    # Delete trade database
+    db_path = config.db_path
+    if db_path.exists():
+        db_path.unlink()
+        results.append("已删除交易记录数据库")
+    
+    # Delete equity history
+    eq_file = data_dir / "equity_history.json"
+    if eq_file.exists():
+        eq_file.unlink()
+        results.append("已删除权益历史")
+    
+    # Delete notifications log
+    notify_file = data_dir / "notifications.log"
+    if notify_file.exists():
+        notify_file.unlink()
+        results.append("已删除通知日志")
+    
+    return {"status": "ok", "message": "策略已重置", "details": results}
+
+
 def _build_api_control(action):
     if action not in ("restart", "stop"): return {"error": f"invalid action: {action}"}
     if _systemctl_bot(action): return {"status": "ok", "action": action, "method": "systemctl"}
@@ -785,10 +745,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         config = BotConfig.from_env()
         parsed = urlparse(self.path); path = parsed.path; qs = parse_qs(parsed.query)
         if path == "/api/status": self._json(_build_api_status(config))
+        elif path == "/api/dashboard_v4": self._json(_build_api_dashboard_v4(config))
         elif path == "/api/stream": self._sse(config)
-        elif path == "/api/trades": self._json(_build_api_trades(config, symbol=qs.get("symbol", [None])[0], side=qs.get("side", [None])[0], symbols_multi=qs.get("symbols", [None])[0], page=int(qs.get("page", ["1"])[0]), per_page=int(qs.get("per_page", ["20"])[0])))
-        elif path == "/api/equity": self._json(_build_api_equity(_get_equity_file(config), symbols_multi=qs.get("symbols", [None])[0], store=TradeStore(config.db_path)))
-        elif path == "/api/stats": self._json(_build_api_stats(config, symbols_multi=qs.get("symbols", [None])[0]))
+        elif path == "/api/trades": self._json(_build_api_trades(config, symbol=qs.get("symbol", [None])[0], side=qs.get("side", [None])[0], symbols_multi=qs.get("symbols", [None])[0], instance=qs.get("instance", [None])[0], strategy=qs.get("strategy", [None])[0], page=int(qs.get("page", ["1"])[0]), per_page=int(qs.get("per_page", ["20"])[0])))
+        elif path == "/api/equity":
+            instance = qs.get("instance", [None])[0]
+            if instance:
+                self._json(_build_api_instance_detail(config, instance).get("equity", {"history": [], "sharpe": 0.0, "max_drawdown": 0.0}))
+            else:
+                self._json(_build_api_equity(_get_equity_file(config), symbols_multi=qs.get("symbols", [None])[0], store=TradeStore(config.db_path)))
+        elif path == "/api/stats": self._json(_build_api_stats(config, symbols_multi=qs.get("symbols", [None])[0], instance=qs.get("instance", [None])[0], strategy=qs.get("strategy", [None])[0]))
         elif path == "/api/config": self._json(_build_api_config(config))
         elif path == "/api/grid": self._json(_build_api_grid(config))
         elif path == "/api/instances":
@@ -862,9 +828,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try: self._json(_update_api_config(params))
             except Exception as e: self._json({"error": str(e)}, 400)
         elif path == "/api/control":
-            client_addr = self.client_address[0]
-            if client_addr not in ("127.0.0.1", "::1"): self._json({"error": "only localhost allowed"}, 403)
-            else: self._json(_build_api_control(params.get("action", "")))
+            # Allow from any client since this is an internal LAN dashboard
+            self._json(_build_api_control(params.get("action", "")))
+        elif path == "/api/reset":
+            try:
+                reset_type = params.get("type", "")
+                if reset_type == "settings":
+                    # Reset settings to defaults
+                    self._json(_reset_settings(config))
+                elif reset_type == "strategy":
+                    # Reset strategy account and trades
+                    instance_name = params.get("instance", "")
+                    self._json(_reset_strategy(instance_name, config))
+                else:
+                    self._json({"error": "invalid reset type"}, 400)
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
         elif path == "/api/run_once":
             try:
                 result = subprocess.run(["python", "-m", "okx_paper_bot.cli", "once"], capture_output=True, text=True, timeout=60, cwd=str(Path(__file__).resolve().parent.parent.parent))
@@ -887,7 +866,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache"); self.send_header("Connection", "keep-alive"); self.end_headers()
         try:
             while True:
-                data = json.dumps(_build_api_status(config))
+                # Use dashboard_v4 data (reconstructed from trades) instead of status (equity_history.json)
+                # to avoid flickering when PaperAccount isn't persisted across restarts
+                data = json.dumps(_build_api_dashboard_v4(config))
                 self.wfile.write(f"data: {data}\n\n".encode()); self.wfile.flush(); time.sleep(5)
         except (BrokenPipeError, ConnectionResetError, OSError): pass
 
