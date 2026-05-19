@@ -35,7 +35,17 @@ def retry_call(fn: Callable[[], T], attempts: int = 3, delay_seconds: float = 1.
     raise last_error
 
 
-def create_okx_exchange(config: BotConfig, ccxt_module: Any | None = "auto"):
+def create_okx_exchange(
+    config: BotConfig,
+    ccxt_module: Any | None = "auto",
+    *,
+    auth: bool = True,
+):
+    """Create an OKX exchange client.
+
+    Public market-data calls should use ``auth=False`` so a bad API passphrase
+    does not break candles, charts, or backtests.
+    """
     if ccxt_module == "auto":
         try:
             import ccxt as ccxt_module  # type: ignore[no-redef]
@@ -45,20 +55,28 @@ def create_okx_exchange(config: BotConfig, ccxt_module: Any | None = "auto"):
     if ccxt_module is None:
         exchange = FakeExchange()
     else:
-        exchange = ccxt_module.okx(
-            {
-                "apiKey": config.api_key,
-                "secret": config.secret,
-                "password": config.password,
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-                "headers": {},
-            }
-        )
+        params: dict[str, Any] = {
+            "enableRateLimit": True,
+            "options": {"defaultType": "spot"},
+            "headers": {},
+        }
+        if auth:
+            if config.api_key:
+                params["apiKey"] = config.api_key
+            if config.secret:
+                params["secret"] = config.secret
+            if config.password:
+                params["password"] = config.password
+        exchange = ccxt_module.okx(params)
 
     if config.okx_demo:
         exchange.headers["x-simulated-trading"] = "1"
     return exchange
+
+
+def create_okx_market_data_exchange(config: BotConfig, ccxt_module: Any | None = "auto"):
+    """Create an unauthenticated OKX client for public candles/tickers."""
+    return create_okx_exchange(config, ccxt_module=ccxt_module, auth=False)
 
 
 def fetch_close_prices(
@@ -74,4 +92,6 @@ def fetch_close_prices(
         attempts=attempts,
         delay_seconds=delay_seconds,
     )
+    if not candles:
+        raise ValueError(f"no OHLCV candles returned for {symbol} {timeframe}")
     return [float(candle[4]) for candle in candles]

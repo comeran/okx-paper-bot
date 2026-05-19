@@ -2,6 +2,7 @@
   "instances": [
     {
       "name": "MA-BTC",
+      "enabled": true,
       "strategy": "ma_crossover",
       "symbols": [
         "BTC/USDT"
@@ -22,34 +23,12 @@
       "tp2_pct": 0.0,
       "tp2_fraction": 1.0,
       "order_usdt": 500.0,
-      "equity": 0.0
-    },
-    {
-      "name": "RSI-ETH",
-      "strategy": "rsi",
-      "symbols": [
-        "ETH/USDT"
-      ],
-      "timeframe": "1m",
-      "fast_window": 5,
-      "slow_window": 20,
-      "rsi_period": 14,
-      "rsi_buy": 30.0,
-      "rsi_sell": 70.0,
-      "bollinger_period": 20,
-      "bollinger_std": 2.0,
-      "stop_loss_pct": 0.05,
-      "take_profit_pct": 0.1,
-      "trailing_stop_pct": 0.0,
-      "tp1_pct": 0.0,
-      "tp1_fraction": 0.5,
-      "tp2_pct": 0.0,
-      "tp2_fraction": 1.0,
-      "order_usdt": 500.0,
-      "equity": 0.0
+      "equity": 1000.0,
+      "allow_pyramiding": true
     },
     {
       "name": "布林带",
+      "enabled": true,
       "strategy": "bollinger",
       "symbols": [
         "BTC/USDT"
@@ -70,7 +49,8 @@
       "tp2_pct": 0.0,
       "tp2_fraction": 1.0,
       "order_usdt": 500.0,
-      "equity": 0.0
+      "equity": 200.0,
+      "allow_pyramiding": true
     }
   ]
 }

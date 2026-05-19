@@ -7,10 +7,17 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from okx_paper_bot.bot import TradingBot
-from okx_paper_bot.config import BotConfig, StrategyInstance, load_strategy_instances
-from okx_paper_bot.exchange import create_okx_exchange, fetch_close_prices
-from okx_paper_bot.paper import PaperAccount
+from okx_paper_bot.bot import TradingBot, _required_candles
+from okx_paper_bot.config import (
+    BotConfig,
+    StrategyInstance,
+    enabled_strategy_instances,
+    load_strategy_instances,
+    validate_strategy_allocation,
+    validate_strategy_instances,
+)
+from okx_paper_bot.exchange import create_okx_market_data_exchange, fetch_close_prices
+from okx_paper_bot.paper import PaperAccount, account_initial_balance, account_initial_mismatch
 from okx_paper_bot.store import TradeStore
 from okx_paper_bot.stats import EquityTracker, PortfolioStats
 from okx_paper_bot.notify import notify, format_status
@@ -53,7 +60,7 @@ def _build_bot_config(config: BotConfig, inst: StrategyInstance) -> BotConfig:
         rsi_sell=inst.rsi_sell,
         bollinger_period=inst.bollinger_period,
         bollinger_std=inst.bollinger_std,
-        initial_balance_usdt=config.initial_balance_usdt,
+        initial_balance_usdt=inst.equity if inst.equity > 0 else config.initial_balance_usdt,
         order_usdt=inst.order_usdt,
         max_position_fraction=config.max_position_fraction,
         fee_pct=config.fee_pct,
@@ -69,6 +76,7 @@ def _build_bot_config(config: BotConfig, inst: StrategyInstance) -> BotConfig:
         tp1_fraction=inst.tp1_fraction,
         tp2_pct=inst.tp2_pct,
         tp2_fraction=inst.tp2_fraction,
+        allow_pyramiding=inst.allow_pyramiding,
         notify_file=config.notify_file,
         loop_interval_seconds=config.loop_interval_seconds,
     )
@@ -89,7 +97,7 @@ def run_loop(config: BotConfig | None = None) -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    exchange = create_okx_exchange(config)
+    exchange = create_okx_market_data_exchange(config)
     store = TradeStore(config.db_path)
     data_dir = Path(config.db_path).parent
 
@@ -97,10 +105,11 @@ def run_loop(config: BotConfig | None = None) -> None:
     tracker = EquityTracker(equity_file)
 
     # Load strategy instances or fall back to legacy single strategy
-    instances = load_strategy_instances()
-    if not instances:
+    configured_instances = load_strategy_instances()
+    if not configured_instances:
         instances = [StrategyInstance(
             name="default",
+            enabled=True,
             strategy=config.strategy_name,
             symbols=config.all_symbols,
             timeframe=config.timeframe,
@@ -120,22 +129,44 @@ def run_loop(config: BotConfig | None = None) -> None:
             tp2_fraction=config.tp2_fraction,
             order_usdt=config.order_usdt,
             equity=config.initial_balance_usdt,
+            allow_pyramiding=config.allow_pyramiding,
         )]
+    else:
+        errors = validate_strategy_instances(configured_instances)
+        errors.extend(validate_strategy_allocation(configured_instances, config.initial_balance_usdt))
+        instances = enabled_strategy_instances(configured_instances)
+        if not instances:
+            errors.append("未启用任何策略实例，机器人未启动")
+        if errors:
+            msg = "策略配置无效，机器人未启动:\n" + "\n".join(f"- {e}" for e in errors)
+            notify(msg, config.notify_file)
+            raise ValueError(msg)
 
     # Create independent PaperAccount per instance
     accounts: dict[str, PaperAccount] = {}
     bots: list[tuple[StrategyInstance, TradingBot]] = []
+    account_errors: list[str] = []
     for inst in instances:
         # Each instance has its own account file and equity
         acct_file = data_dir / f"account_{inst.name}.json"
         inst_equity = inst.equity if inst.equity > 0 else config.initial_balance_usdt
         acct = PaperAccount.load(acct_file, fallback_balance=inst_equity)
+        if acct_file.exists() and account_initial_mismatch(acct, inst_equity):
+            account_errors.append(
+                f"{inst.name}: 账户初始资金 {account_initial_balance(acct):.2f} USDT "
+                f"与分配权益 {inst_equity:.2f} USDT 不一致，请先重置该策略账户"
+            )
+            continue
         accounts[inst.name] = acct
         inst_config = _build_bot_config(config, inst)
         bot = TradingBot(inst_config, acct, store, instance_name=inst.name)
         bots.append((inst, bot))
         pos_info = acct.positions if acct.positions else "空仓"
         print(f"📦 [{inst.name}] 余额: {acct.balance_usdt:.2f} | 持仓: {pos_info} | 分配权益: {inst_equity:.2f}")
+    if account_errors:
+        msg = "策略账户状态无效，机器人未启动:\n" + "\n".join(f"- {e}" for e in account_errors)
+        notify(msg, config.notify_file)
+        raise ValueError(msg)
 
     # Collect all unique symbols and determine min sleep interval
     all_symbols: list[str] = []
@@ -172,7 +203,7 @@ def run_loop(config: BotConfig | None = None) -> None:
             try:
                 for inst, bot in bots:
                     # Per-instance limit based on slow window
-                    limit = max(inst.slow_window + 1, 22)
+                    limit = _required_candles(bot.config)
                     for sym in inst.symbols:
                         closes = fetch_close_prices(exchange, symbol=sym, timeframe=inst.timeframe, limit=limit)
                         last_prices[sym] = closes[-1]

@@ -7,9 +7,9 @@ from okx_paper_bot.config import BotConfig
 from okx_paper_bot.paper import PaperAccount
 from okx_paper_bot.risk import RiskConfig, StopLossConfig, size_order, check_stop_loss
 from okx_paper_bot.store import TradeStore
-from okx_paper_bot.strategy import get_signal
 from okx_paper_bot.exchange import fetch_close_prices
 from okx_paper_bot.notify import notify, format_trade_signal, format_error, format_status
+from okx_paper_bot.strategies import get_strategy
 
 
 class TradingBot:
@@ -26,6 +26,11 @@ class TradingBot:
         self._highest_prices: dict[str, float] = {}
         # 部分止盈状态: {symbol: {"tp1_done": False, "tp2_done": False}}
         self._partial_tp_state: dict[str, dict] = {}
+        for sym in self.account.positions:
+            avg = self.account.avg_entry_price(sym)
+            if avg > 0:
+                self._entry_prices[sym] = avg
+                self._highest_prices[sym] = avg
 
     def _record_trade(self, symbol: str, side: str, amount: float, price: float, order_id: str) -> None:
         self.store.record_trade(
@@ -35,11 +40,16 @@ class TradingBot:
 
     def _get_signal(self, closes: list[float]) -> str:
         cfg = self.config
-        return get_signal(closes, strategy=cfg.strategy_name,
-                          fast=cfg.fast_window, slow=cfg.slow_window,
-                          period=cfg.rsi_period, buy_threshold=cfg.rsi_buy,
-                          sell_threshold=cfg.rsi_sell,
-                          num_std=cfg.bollinger_std)
+        params = {}
+        if cfg.strategy_name == "ma_crossover":
+            params = {"fast": cfg.fast_window, "slow": cfg.slow_window}
+        elif cfg.strategy_name == "rsi":
+            params = {"period": cfg.rsi_period, "oversold": cfg.rsi_buy, "overbought": cfg.rsi_sell}
+        elif cfg.strategy_name == "bollinger":
+            params = {"period": cfg.bollinger_period, "std_dev": cfg.bollinger_std}
+        elif cfg.strategy_name == "macd":
+            params = {"fast_period": cfg.fast_window, "slow_period": cfg.slow_window, "signal_period": 9}
+        return get_strategy(cfg.strategy_name, **params).signal(closes)
 
     def _check_partial_take_profit(self, symbol: str, price: float) -> list[dict]:
         """检查部分止盈。
@@ -142,6 +152,8 @@ class TradingBot:
             return {"signal": "hold", "order": None}
 
         if signal == "buy":
+            if self.account.total_held(sym) > 1e-12 and not getattr(self.config, "allow_pyramiding", False):
+                return {"signal": "hold", "order": None, "reason": "pyramiding_disabled"}
             amount = size_order(self.account.balance_usdt, price,
                                 RiskConfig(order_usdt=self.config.order_usdt,
                                            max_position_fraction=self.config.max_position_fraction))
@@ -152,8 +164,8 @@ class TradingBot:
         if order["status"] == "closed":
             self._record_trade(sym, signal, amount=order["amount"], price=order["price"], order_id=order["id"])
             if signal == "buy":
-                self._entry_prices[sym] = price
-                self._highest_prices[sym] = price
+                self._entry_prices[sym] = self.account.avg_entry_price(sym) or price
+                self._highest_prices[sym] = max(self._highest_prices.get(sym, price), price)
                 self._partial_tp_state.pop(sym, None)
             elif signal == "sell":
                 self._entry_prices.pop(sym, None)
@@ -168,8 +180,9 @@ class TradingBot:
     def run_once_from_exchange(self, exchange, symbol: str | None = None) -> dict:
         sym = symbol or self.config.symbol
         try:
+            limit = _required_candles(self.config)
             closes = fetch_close_prices(exchange, symbol=sym, timeframe=self.config.timeframe,
-                                        limit=max(self.config.slow_window + 1, 22))
+                                        limit=limit)
         except Exception as exc:
             msg = format_error(sym, str(exc))
             notify(msg, self.notify_file, self._queue_file)
@@ -181,3 +194,13 @@ class TradingBot:
         sym = symbol or self.config.symbol
         signal = self._get_signal(closes)
         return format_status(sym, price, self.account.balance_usdt, self.account.positions, signal)
+
+
+def _required_candles(config: BotConfig) -> int:
+    if config.strategy_name == "rsi":
+        return max(config.rsi_period + 2, 22)
+    if config.strategy_name == "bollinger":
+        return max(config.bollinger_period + 1, 22)
+    if config.strategy_name == "macd":
+        return max(config.slow_window + 10, 36)
+    return max(config.slow_window + 1, 22)

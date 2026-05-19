@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass, field
 from itertools import count
 from pathlib import Path
@@ -25,9 +27,14 @@ class PaperAccount:
     balance_usdt: float = 1_000.0
     fee_pct: float = 0.001
     slippage_pct: float = 0.0005
+    initial_balance_usdt: float | None = None
     _ids: count = field(default_factory=lambda: count(1), init=False, repr=False)
     _positions: list[Position] = field(default_factory=list, init=False, repr=False)
     _pending_orders: list[dict] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.initial_balance_usdt is None:
+            self.initial_balance_usdt = float(self.balance_usdt)
 
     @property
     def positions(self) -> dict[str, float]:
@@ -174,8 +181,11 @@ class PaperAccount:
 
     def save(self, path: str | Path) -> None:
         """Persist account state to JSON file."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "balance_usdt": self.balance_usdt,
+            "initial_balance_usdt": self.initial_balance_usdt,
             "fee_pct": self.fee_pct,
             "slippage_pct": self.slippage_pct,
             "positions": [
@@ -185,7 +195,17 @@ class PaperAccount:
             "pending_orders": self._pending_orders,
             "next_id": next(self._ids) if hasattr(self, '_ids') else 1,
         }
-        Path(path).write_text(json.dumps(data, indent=2))
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{p.name}.", suffix=".tmp", dir=str(p.parent))
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, p)
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
 
     @classmethod
     def load(cls, path: str | Path, fallback_balance: float = 1_000.0) -> "PaperAccount":
@@ -199,6 +219,7 @@ class PaperAccount:
                 balance_usdt=data.get("balance_usdt", fallback_balance),
                 fee_pct=data.get("fee_pct", 0.001),
                 slippage_pct=data.get("slippage_pct", 0.0005),
+                initial_balance_usdt=data.get("initial_balance_usdt"),
             )
             for pos in data.get("positions", []):
                 acc._positions.append(Position(
@@ -212,3 +233,15 @@ class PaperAccount:
             return acc
         except (json.JSONDecodeError, KeyError, TypeError):
             return cls(balance_usdt=fallback_balance)
+
+
+def account_initial_balance(account: PaperAccount) -> float:
+    """Return the capital allocation that created an account state file."""
+    if account.initial_balance_usdt is None:
+        return float(account.balance_usdt)
+    return float(account.initial_balance_usdt)
+
+
+def account_initial_mismatch(account: PaperAccount, expected_initial: float, tolerance: float = 0.01) -> bool:
+    """True when an existing account file was initialized with different capital."""
+    return abs(account_initial_balance(account) - float(expected_initial)) > tolerance

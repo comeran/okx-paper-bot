@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 class StrategyInstance:
     """A single strategy instance with its own params and symbols."""
     name: str = "default"
+    enabled: bool = False  # 只有启用后才会被 bot/run_once 执行
     strategy: str = "ma_crossover"
     symbols: list[str] = field(default_factory=lambda: ["BTC/USDT"])
     timeframe: str = "1h"
@@ -31,7 +32,8 @@ class StrategyInstance:
     tp2_pct: float = 0.0
     tp2_fraction: float = 1.0
     order_usdt: float = 500.0
-    equity: float = 0.0  # 分配的权益，0 表示使用全局余额
+    equity: float = 0.0  # 启用前必须显式分配的权益
+    allow_pyramiding: bool = False  # 已有持仓时是否允许继续加仓
 
     def strategy_params(self) -> dict:
         """Return strategy-specific params for get_strategy()."""
@@ -60,6 +62,7 @@ def load_strategy_instances(config_dir: Path | str = Path(".")) -> list[Strategy
         for item in data.get("instances", []):
             instances.append(StrategyInstance(
                 name=item.get("name", "default"),
+                enabled=_parse_bool(item.get("enabled"), default=False),
                 strategy=item.get("strategy", "ma_crossover"),
                 symbols=item.get("symbols", ["BTC/USDT"]),
                 timeframe=item.get("timeframe", "1h"),
@@ -79,6 +82,7 @@ def load_strategy_instances(config_dir: Path | str = Path(".")) -> list[Strategy
                 tp2_fraction=float(item.get("tp2_fraction", 1.0)),
                 order_usdt=float(item.get("order_usdt", 500.0)),
                 equity=float(item.get("equity", 0.0)),
+                allow_pyramiding=_parse_bool(item.get("allow_pyramiding"), default=False),
             ))
         return instances
     except (json.JSONDecodeError, KeyError, TypeError):
@@ -92,6 +96,7 @@ def save_strategy_instances(instances: list[StrategyInstance], config_dir: Path 
     for inst in instances:
         data["instances"].append({
             "name": inst.name,
+            "enabled": inst.enabled,
             "strategy": inst.strategy,
             "symbols": inst.symbols,
             "timeframe": inst.timeframe,
@@ -111,8 +116,56 @@ def save_strategy_instances(instances: list[StrategyInstance], config_dir: Path 
             "tp2_fraction": inst.tp2_fraction,
             "order_usdt": inst.order_usdt,
             "equity": inst.equity,
+            "allow_pyramiding": inst.allow_pyramiding,
         })
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def validate_strategy_instances(instances: list[StrategyInstance], *, require_equity: bool = True) -> list[str]:
+    """Return validation errors for configured strategy instances."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    valid_strategies = {"ma_crossover", "rsi", "bollinger", "macd"}
+    for idx, inst in enumerate(instances, 1):
+        label = inst.name or f"#{idx}"
+        if not inst.name.strip():
+            errors.append(f"策略实例 {idx} 缺少名称")
+        elif inst.name in seen:
+            errors.append(f"策略实例名称重复: {inst.name}")
+        seen.add(inst.name)
+        if inst.strategy not in valid_strategies:
+            errors.append(f"{label}: 未知策略 {inst.strategy}")
+        if not inst.symbols or any(not s.strip() for s in inst.symbols):
+            errors.append(f"{label}: symbols 不能为空")
+        if require_equity and inst.enabled and inst.equity <= 0:
+            errors.append(f"{label}: 分配权益(USDT) 必须大于 0")
+        if inst.fast_window <= 0 or inst.slow_window <= 0 or inst.fast_window >= inst.slow_window:
+            errors.append(f"{label}: 需要 0 < fast_window < slow_window")
+        if inst.rsi_period <= 1:
+            errors.append(f"{label}: rsi_period 必须大于 1")
+        if inst.bollinger_period <= 1 or inst.bollinger_std <= 0:
+            errors.append(f"{label}: bollinger 参数无效")
+        if inst.order_usdt <= 0:
+            errors.append(f"{label}: order_usdt 必须大于 0")
+    return errors
+
+
+def enabled_strategy_instances(instances: list[StrategyInstance]) -> list[StrategyInstance]:
+    """Return instances that are allowed to run."""
+    return [inst for inst in instances if inst.enabled]
+
+
+def validate_strategy_allocation(instances: list[StrategyInstance], initial_balance: float) -> list[str]:
+    """Validate enabled strategy equity against configured initial balance."""
+    errors: list[str] = []
+    if initial_balance <= 0:
+        return ["初始资金必须大于 0"]
+    total = sum(inst.equity for inst in instances if inst.enabled and inst.equity > 0)
+    if total > initial_balance + 1e-9:
+        errors.append(
+            f"启用策略分配权益合计 {total:.2f} USDT 超过初始资金 {initial_balance:.2f} USDT"
+        )
+    return errors
 
 
 @dataclass(frozen=True)
@@ -146,6 +199,7 @@ class BotConfig:
     tp1_fraction: float = 0.5  # 第一档平仓比例 (0.5 = 平一半)
     tp2_pct: float = 0.0       # 第二档止盈触发点
     tp2_fraction: float = 1.0  # 第二档平仓比例 (1.0 = 全平)
+    allow_pyramiding: bool = False
     notify_file: Path = Path("data/notifications.log")
     loop_interval_seconds: int = 60
 
@@ -187,6 +241,7 @@ class BotConfig:
             tp1_fraction=float(os.getenv("TP1_FRACTION", cls.tp1_fraction)),
             tp2_pct=float(os.getenv("TP2_PCT", cls.tp2_pct)),
             tp2_fraction=float(os.getenv("TP2_FRACTION", cls.tp2_fraction)),
+            allow_pyramiding=_parse_bool(os.getenv("ALLOW_PYRAMIDING"), default=cls.allow_pyramiding),
             notify_file=Path(os.getenv("NOTIFY_FILE", str(cls.notify_file))),
             loop_interval_seconds=int(os.getenv("LOOP_INTERVAL_SECONDS", cls.loop_interval_seconds)),
         )
@@ -195,4 +250,6 @@ class BotConfig:
 def _parse_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
+    if isinstance(value, bool):
+        return value
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}

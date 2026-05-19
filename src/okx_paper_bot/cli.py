@@ -16,7 +16,7 @@ def main() -> None:
     run_p.add_argument("--symbol", type=str)
     run_p.add_argument("--symbols", type=str, help="多交易对 (逗号分隔)")
     run_p.add_argument("--timeframe", type=str)
-    run_p.add_argument("--strategy", choices=["ma_crossover", "rsi", "bollinger"])
+    run_p.add_argument("--strategy", choices=["ma_crossover", "rsi", "bollinger", "macd"])
     run_p.add_argument("--stop-loss", type=float)
     run_p.add_argument("--take-profit", type=float)
     run_p.add_argument("--trailing-stop", type=float)
@@ -26,6 +26,7 @@ def main() -> None:
     run_p.add_argument("--tp1-frac", type=float, help="第一档平仓比例 (0.5=一半)")
     run_p.add_argument("--tp2", type=float, help="第二档止盈")
     run_p.add_argument("--tp2-frac", type=float, help="第二档平仓比例")
+    run_p.add_argument("--allow-pyramiding", action="store_true", help="已有持仓时允许继续加仓")
     run_p.add_argument("--interval", type=int)
     run_p.add_argument("--live", action="store_true", help="实盘模式 (需要确认)")
 
@@ -78,6 +79,7 @@ def _apply_overrides(config: BotConfig, args) -> BotConfig:
         "fee": "fee_pct", "slippage": "slippage_pct",
         "tp1": "tp1_pct", "tp1_frac": "tp1_fraction",
         "tp2": "tp2_pct", "tp2_frac": "tp2_fraction",
+        "allow_pyramiding": "allow_pyramiding",
         "interval": "loop_interval_seconds",
     }
     for arg_key, cfg_key in mapping.items():
@@ -115,30 +117,72 @@ def _run(args) -> None:
 
 def _once() -> None:
     from okx_paper_bot.bot import TradingBot
-    from okx_paper_bot.exchange import create_okx_exchange, fetch_close_prices
-    from okx_paper_bot.paper import PaperAccount
+    from okx_paper_bot.exchange import create_okx_market_data_exchange
+    from okx_paper_bot.paper import PaperAccount, account_initial_balance, account_initial_mismatch
     from okx_paper_bot.store import TradeStore
+    from okx_paper_bot.config import (
+        StrategyInstance,
+        enabled_strategy_instances,
+        load_strategy_instances,
+        validate_strategy_allocation,
+        validate_strategy_instances,
+    )
+    from okx_paper_bot.runner import _build_bot_config
     config = BotConfig.from_env()
-    exchange = create_okx_exchange(config)
-    account = PaperAccount(balance_usdt=config.initial_balance_usdt, fee_pct=config.fee_pct, slippage_pct=config.slippage_pct)
+    exchange = create_okx_market_data_exchange(config)
     store = TradeStore(config.db_path)
-    bot = TradingBot(config, account, store)
-    for sym in config.all_symbols:
-        result = bot.run_once_from_exchange(exchange, symbol=sym)
-        print(f"[{sym}] {result}")
-    print({"balance_usdt": account.balance_usdt, "positions": account.positions})
+    configured_instances = load_strategy_instances()
+    if not configured_instances:
+        instances = [StrategyInstance(
+            name="default", enabled=True, strategy=config.strategy_name, symbols=config.all_symbols,
+            timeframe=config.timeframe, fast_window=config.fast_window, slow_window=config.slow_window,
+            rsi_period=config.rsi_period, rsi_buy=config.rsi_buy, rsi_sell=config.rsi_sell,
+            bollinger_period=config.bollinger_period, bollinger_std=config.bollinger_std,
+            stop_loss_pct=config.stop_loss_pct, take_profit_pct=config.take_profit_pct,
+            trailing_stop_pct=config.trailing_stop_pct, tp1_pct=config.tp1_pct,
+            tp1_fraction=config.tp1_fraction, tp2_pct=config.tp2_pct,
+            tp2_fraction=config.tp2_fraction, order_usdt=config.order_usdt,
+            equity=config.initial_balance_usdt, allow_pyramiding=config.allow_pyramiding,
+        )]
+    else:
+        errors = validate_strategy_instances(configured_instances)
+        errors.extend(validate_strategy_allocation(configured_instances, config.initial_balance_usdt))
+        instances = enabled_strategy_instances(configured_instances)
+        if not instances:
+            errors.append("未启用任何策略实例，once 未执行")
+    if not configured_instances:
+        errors = validate_strategy_instances(instances)
+    if errors:
+        raise SystemExit("策略配置无效:\n" + "\n".join(f"- {e}" for e in errors))
+    data_dir = config.db_path.parent
+    for inst in instances:
+        inst_config = _build_bot_config(config, inst)
+        account_file = data_dir / f"account_{inst.name}.json"
+        account = PaperAccount.load(account_file, fallback_balance=inst.equity)
+        if account_file.exists() and account_initial_mismatch(account, inst.equity):
+            raise SystemExit(
+                "策略账户状态无效:\n"
+                f"- {inst.name}: 账户初始资金 {account_initial_balance(account):.2f} USDT "
+                f"与分配权益 {inst.equity:.2f} USDT 不一致，请先重置该策略账户"
+            )
+        bot = TradingBot(inst_config, account, store, instance_name=inst.name)
+        for sym in inst.symbols:
+            result = bot.run_once_from_exchange(exchange, symbol=sym)
+            print(f"[{inst.name}][{sym}] {result}")
+        account.save(account_file)
+        print({"instance": inst.name, "balance_usdt": account.balance_usdt, "positions": account.positions})
 
 
 def _backtest(args) -> None:
     import time
     from okx_paper_bot.backtester import fetch_historical_candles, run_backtest
-    from okx_paper_bot.exchange import create_okx_exchange
+    from okx_paper_bot.exchange import create_okx_market_data_exchange
     config = BotConfig(symbol=args.symbol, timeframe=args.timeframe,
                        fast_window=args.fast, slow_window=args.slow,
                        initial_balance_usdt=args.balance, order_usdt=args.order_usdt,
                        stop_loss_pct=args.stop_loss, take_profit_pct=args.take_profit,
                        trailing_stop_pct=args.trailing_stop)
-    exchange = create_okx_exchange(config)
+    exchange = create_okx_market_data_exchange(config)
     since_ms = int((time.time() - args.days * 86400) * 1000)
     print(f"📥 拉取 {args.symbol} 历史 K 线 ({args.timeframe}, {args.days} 天)...")
     candles = fetch_historical_candles(exchange, args.symbol, args.timeframe, since_ms)
@@ -158,11 +202,11 @@ def _backtest(args) -> None:
 
 
 def _stats(args) -> None:
-    from okx_paper_bot.exchange import create_okx_exchange, fetch_close_prices
+    from okx_paper_bot.exchange import create_okx_market_data_exchange, fetch_close_prices
     from okx_paper_bot.store import TradeStore
     from okx_paper_bot.stats import PortfolioStats, EquityTracker
     config = BotConfig.from_env()
-    exchange = create_okx_exchange(config)
+    exchange = create_okx_market_data_exchange(config)
     store = TradeStore(config.db_path)
     trades = store.list_trades()
     closes = fetch_close_prices(exchange, args.symbol, config.timeframe, limit=2)
@@ -192,7 +236,7 @@ def _stats(args) -> None:
 
 def _dashboard(args) -> None:
     from okx_paper_bot.dashboard import run_dashboard
-    run_dashboard(port=args.port)
+    run_dashboard(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

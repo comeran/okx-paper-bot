@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import pytest
 
 from okx_paper_bot.config import BotConfig
+from okx_paper_bot.paper import PaperAccount
 from okx_paper_bot.store import TradeStore
 from okx_paper_bot.stats import EquitySnapshot, EquityTracker
 
@@ -38,7 +39,8 @@ def store(db_path):
     return TradeStore(db_path)
 
 @pytest.fixture
-def config(db_path, tmp_dir):
+def config(db_path, tmp_dir, monkeypatch):
+    monkeypatch.chdir(tmp_dir)
     return BotConfig(
         symbol="BTC/USDT",
         symbols=("BTC/USDT",),
@@ -57,6 +59,31 @@ def _populate_trades(store: TradeStore, trades: list[dict]):
     """Insert pre-built trade dicts into the store."""
     for t in trades:
         store.record_trade(t["symbol"], t["side"], t["amount"], t["price"], t.get("order_id", "test-001"))
+
+
+class TestStrategyInstanceValidation:
+
+    def test_equity_is_required_only_for_enabled_instances(self):
+        from okx_paper_bot.config import StrategyInstance, validate_strategy_instances
+
+        errors = validate_strategy_instances([
+            StrategyInstance(name="draft", enabled=False, symbols=["BTC/USDT"], equity=0.0),
+            StrategyInstance(name="live", enabled=True, symbols=["ETH/USDT"], equity=0.0),
+        ])
+
+        assert not any("draft" in item and "分配权益" in item for item in errors)
+        assert any("live" in item and "分配权益" in item for item in errors)
+
+    def test_enabled_allocation_cannot_exceed_initial_balance(self):
+        from okx_paper_bot.config import StrategyInstance, validate_strategy_allocation
+
+        errors = validate_strategy_allocation([
+            StrategyInstance(name="A", enabled=True, symbols=["BTC/USDT"], equity=700.0),
+            StrategyInstance(name="B", enabled=True, symbols=["ETH/USDT"], equity=400.0),
+            StrategyInstance(name="draft", enabled=False, symbols=["SOL/USDT"], equity=5000.0),
+        ], initial_balance=1000.0)
+
+        assert any("1100.00 USDT" in item and "1000.00 USDT" in item for item in errors)
 
 
 # ── Task 1: /api/status ──────────────────────────────────────────────────
@@ -267,6 +294,7 @@ class TestApiConfig:
         assert "api_key" not in result
         assert "secret" not in result
         assert "password" not in result
+        assert result["okx_api_key"] == ""
 
     def test_has_expected_fields(self, config):
         from okx_paper_bot.dashboard import _build_api_config
@@ -479,6 +507,21 @@ class TestApiControl:
         assert result["method"] == "sigterm"
         assert [pid for pid, _sig in killed] == [123, 456]
 
+    def test_reset_single_strategy_deletes_only_instance_rows(self, tmp_dir):
+        from okx_paper_bot.dashboard import _reset_strategy
+
+        db = tmp_dir / "trades.sqlite3"
+        config = BotConfig(db_path=db)
+        store = TradeStore(db)
+        store.record_trade("BTC/USDT", "buy", 1.0, 100.0, "a1", instance_name="A")
+        store.record_trade("ETH/USDT", "buy", 1.0, 100.0, "b1", instance_name="B")
+
+        result = _reset_strategy("A", config)
+
+        assert result["status"] == "ok"
+        rows = TradeStore(db).list_trades()
+        assert [r["instance_name"] for r in rows] == ["B"]
+
 
 # ── Dashboard v4 per-instance data layer ─────────────────────────────────
 
@@ -527,6 +570,255 @@ class TestDashboardV4:
         assert by_strategy["ma_crossover"]["total_pnl"] == pytest.approx(10.0)
         assert by_strategy["rsi"]["total_pnl"] == pytest.approx(-10.0)
         assert payload["totals"]["trades_count"] == 4
+
+    def test_valid_instances_use_account_state_as_truth(self, tmp_dir, monkeypatch):
+        from okx_paper_bot.config import StrategyInstance, save_strategy_instances
+        from okx_paper_bot.dashboard import _build_api_dashboard_v4
+
+        monkeypatch.chdir(tmp_dir)
+        db = tmp_dir / "trades.sqlite3"
+        config = BotConfig(db_path=db, initial_balance_usdt=9999.0)
+        save_strategy_instances([
+            StrategyInstance(name="A", enabled=True, strategy="ma_crossover", symbols=["BTC/USDT"], equity=1500.0)
+        ], tmp_dir)
+        account = PaperAccount(balance_usdt=1200.0, initial_balance_usdt=1500.0)
+        account.execute_market_order("BTC/USDT", "buy", 1.0, 100.0)
+        account.save(tmp_dir / "account_A.json")
+        store = TradeStore(db)
+        store.record_trade("BTC/USDT", "buy", 1.0, 200.0, "audit-row", instance_name="A", strategy_name="ma_crossover")
+
+        payload = _build_api_dashboard_v4(config)
+        inst = payload["instances"][0]
+        assert inst["initial_balance"] == 1500.0
+        assert inst["balance"] == pytest.approx(account.balance_usdt)
+        assert inst["positions"][0]["amount"] == pytest.approx(1.0)
+        # Price is the latest audited market price, but amount/balance come from PaperAccount.
+        assert inst["positions"][0]["price"] == pytest.approx(200.0)
+
+    def test_dashboard_overview_counts_only_enabled_allocations(self, tmp_dir, monkeypatch):
+        from okx_paper_bot.config import StrategyInstance, save_strategy_instances
+        from okx_paper_bot.dashboard import _build_api_dashboard_v4
+
+        monkeypatch.chdir(tmp_dir)
+        config = BotConfig(db_path=tmp_dir / "trades.sqlite3", initial_balance_usdt=2000.0)
+        save_strategy_instances([
+            StrategyInstance(name="A", enabled=True, symbols=["BTC/USDT"], equity=600.0),
+            StrategyInstance(name="B", enabled=False, symbols=["ETH/USDT"], equity=1000.0),
+        ], tmp_dir)
+        PaperAccount(balance_usdt=600.0).save(tmp_dir / "account_A.json")
+
+        payload = _build_api_dashboard_v4(config)
+
+        assert payload["account"]["stats"]["initial_balance"] == pytest.approx(600.0)
+        assert payload["account"]["stats"]["total_equity"] == pytest.approx(600.0)
+        rows = {row["name"]: row for row in payload["instances"]}
+        assert rows["A"]["account_state"] == "ok"
+        assert rows["B"]["account_state"] == "disabled"
+
+    def test_validation_blocks_zero_equity_and_missing_account_with_trades(self, tmp_dir, monkeypatch):
+        from okx_paper_bot.config import StrategyInstance, save_strategy_instances
+        from okx_paper_bot.dashboard import _build_api_validation
+
+        monkeypatch.chdir(tmp_dir)
+        db = tmp_dir / "trades.sqlite3"
+        config = BotConfig(db_path=db)
+        save_strategy_instances([
+            StrategyInstance(name="A", enabled=True, symbols=["BTC/USDT"], equity=0.0),
+            StrategyInstance(name="B", enabled=True, symbols=["ETH/USDT"], equity=1000.0),
+        ], tmp_dir)
+        TradeStore(db).record_trade("ETH/USDT", "buy", 1.0, 100.0, "b1", instance_name="B", strategy_name="rsi")
+
+        result = _build_api_validation(config)
+        assert result["status"] == "blocked"
+        assert any("分配权益" in item for item in result["blockers"])
+        assert any("账户状态文件不存在" in item for item in result["blockers"])
+
+    def test_validation_blocks_account_initial_balance_mismatch(self, tmp_dir, monkeypatch):
+        from okx_paper_bot.config import StrategyInstance, save_strategy_instances
+        from okx_paper_bot.dashboard import _build_api_validation, _build_api_dashboard_v4
+
+        monkeypatch.chdir(tmp_dir)
+        config = BotConfig(db_path=tmp_dir / "trades.sqlite3")
+        save_strategy_instances([
+            StrategyInstance(name="A", enabled=True, symbols=["BTC/USDT"], equity=200.0),
+        ], tmp_dir)
+        PaperAccount(balance_usdt=20000.0).save(tmp_dir / "account_A.json")
+
+        result = _build_api_validation(config)
+        payload = _build_api_dashboard_v4(config)
+
+        assert result["status"] == "blocked"
+        assert any("账户初始资金" in item and "分配权益" in item for item in result["blockers"])
+        assert payload["instances"][0]["account_state"] == "allocation_mismatch"
+
+    def test_disabled_zero_equity_instance_does_not_display_global_balance(self, tmp_dir, monkeypatch):
+        from okx_paper_bot.config import StrategyInstance, save_strategy_instances
+        from okx_paper_bot.dashboard import _build_api_dashboard_v4
+
+        monkeypatch.chdir(tmp_dir)
+        config = BotConfig(db_path=tmp_dir / "trades.sqlite3", initial_balance_usdt=10000.0)
+        save_strategy_instances([
+            StrategyInstance(name="A", symbols=["BTC/USDT"], equity=0.0),
+            StrategyInstance(name="B", symbols=["ETH/USDT"], equity=0.0),
+        ], tmp_dir)
+
+        payload = _build_api_dashboard_v4(config)
+
+        assert payload["account"]["stats"]["total_equity"] == pytest.approx(10000.0)
+        assert [row["total_equity"] for row in payload["instances"]] == [0.0, 0.0]
+        assert all(row["account_state"] == "disabled" for row in payload["instances"])
+
+
+class TestFastAPI:
+
+    @pytest.fixture
+    def client(self, tmp_dir, monkeypatch):
+        from fastapi.testclient import TestClient
+        from okx_paper_bot.dashboard import create_app
+
+        monkeypatch.chdir(tmp_dir)
+        monkeypatch.setenv("DB_PATH", str(tmp_dir / "trades.sqlite3"))
+        monkeypatch.setenv("INITIAL_BALANCE_USDT", "1000")
+        monkeypatch.setenv("STRATEGY", "ma_crossover")
+        monkeypatch.setenv("OKX_TIMEFRAME", "1m")
+        monkeypatch.setenv("OKX_API_KEY", "key")
+        monkeypatch.setenv("OKX_API_SECRET", "secret")
+        monkeypatch.setenv("OKX_API_PASSWORD", "pass")
+        return TestClient(create_app())
+
+    def test_health_and_config_do_not_leak_secrets(self, client):
+        assert client.get("/api/health").json()["status"] == "ok"
+        config = client.get("/api/config").json()
+        assert config["strategy"] == "ma_crossover"
+        assert config["okx_api_secret"] == "***"
+        assert config["okx_api_key"] == "***"
+        assert "secret" not in config
+        assert "password" not in config
+
+    def test_instances_save_allows_disabled_zero_equity_draft(self, client):
+        response = client.post("/api/instances", json={"instances": [{
+            "name": "bad", "strategy": "rsi", "symbols": ["BTC/USDT"], "equity": 0
+        }]})
+        assert response.status_code == 200
+        validation = client.get("/api/validation").json()
+        assert validation["status"] == "blocked"
+        assert any("未启用任何策略" in item for item in validation["blockers"])
+        assert not any("分配权益" in item for item in validation["blockers"])
+
+    def test_instances_save_rejects_enabled_zero_equity(self, client):
+        response = client.post("/api/instances", json={"instances": [{
+            "name": "bad", "enabled": True, "strategy": "rsi", "symbols": ["BTC/USDT"], "equity": 0
+        }]})
+        assert response.status_code == 400
+        assert any("分配权益" in item for item in response.json()["details"])
+
+    def test_instances_save_rejects_enabled_allocation_over_initial_balance(self, client):
+        response = client.post("/api/instances", json={"instances": [
+            {"name": "A", "enabled": True, "strategy": "ma_crossover", "symbols": ["BTC/USDT"], "equity": 700},
+            {"name": "B", "enabled": True, "strategy": "rsi", "symbols": ["ETH/USDT"], "equity": 400},
+        ]})
+        assert response.status_code == 400
+        assert any("超过初始资金" in item for item in response.json()["details"])
+
+    def test_instances_save_accepts_valid_payload(self, client):
+        response = client.post("/api/instances", json={"instances": [{
+            "name": "ok", "enabled": True, "strategy": "macd", "symbols": ["BTC/USDT"], "equity": 1000,
+            "fast_window": 12, "slow_window": 26, "allow_pyramiding": True
+        }]})
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        rows = client.get("/api/instances").json()["instances"]
+        assert rows[0]["enabled"] is True
+        assert rows[0]["allow_pyramiding"] is True
+
+    def test_dashboard_rows_can_be_saved_after_editing_equity(self, client):
+        client.post("/api/instances", json={"instances": [
+            {"name": "MA-BTC", "strategy": "ma_crossover", "symbols": ["BTC/USDT"], "equity": 1000},
+            {"name": "RSI-ETH", "strategy": "rsi", "symbols": ["ETH/USDT"], "equity": 1000},
+        ]})
+        rows = client.get("/api/dashboard_v4").json()["instances"]
+        assert all("equity" in row for row in rows)
+        assert all("allow_pyramiding" in row for row in rows)
+        rows[0]["equity"] = 1500
+
+        response = client.post("/api/instances", json={"instances": rows})
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        saved = client.get("/api/instances").json()["instances"]
+        assert saved[0]["equity"] == 1500
+
+    def test_backtest_endpoint_uses_market_data_exchange(self, client, monkeypatch):
+        import okx_paper_bot.exchange as exchange_module
+
+        start_ms = int((datetime.now(timezone.utc) - timedelta(minutes=79)).timestamp() * 1000)
+        candles = [
+            [start_ms + i * 60_000, 100 + i, 101 + i, 99 + i, 100 + i, 10]
+            for i in range(80)
+        ]
+
+        class FakeMarketExchange:
+            def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
+                rows = [c for c in candles if since is None or c[0] >= since]
+                return rows[: limit or len(rows)]
+
+        monkeypatch.setattr(exchange_module, "create_okx_market_data_exchange", lambda config: FakeMarketExchange())
+
+        response = client.post("/api/backtest", json={
+            "symbol": "BTC/USDT", "strategy": "ma_crossover", "timeframe": "1m", "days": 1
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["symbol"] == "BTC/USDT"
+        assert data["strategy"] == "ma_crossover"
+        assert data["candles"] == 80
+
+    def test_backtest_endpoint_rejects_invalid_window(self, client):
+        response = client.post("/api/backtest", json={
+            "symbol": "BTC/USDT", "strategy": "ma_crossover", "fast": 20, "slow": 5
+        })
+        assert response.status_code == 400
+        assert "fast" in response.json()["error"]
+
+    def test_klines_endpoint_returns_clear_exchange_error(self, client, monkeypatch):
+        import okx_paper_bot.exchange as exchange_module
+
+        class BrokenMarketExchange:
+            def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
+                raise RuntimeError("exchange unavailable")
+
+        monkeypatch.setattr(exchange_module, "create_okx_market_data_exchange", lambda config: BrokenMarketExchange())
+
+        response = client.get("/api/klines?symbol=BTC/USDT&timeframe=1m&days=1")
+
+        assert response.status_code == 502
+        assert response.json()["error"] == "exchange unavailable"
+
+    def test_process_status_works_without_proc(self, monkeypatch):
+        from okx_paper_bot import dashboard
+
+        real_path = dashboard.Path
+
+        class NoProc:
+            def exists(self): return False
+
+        def fake_path(value):
+            if value == "/proc":
+                return NoProc()
+            return real_path(value)
+
+        monkeypatch.setattr(dashboard, "Path", fake_path)
+        monkeypatch.setattr(dashboard, "_find_bot_pids", lambda: [])
+        assert dashboard._build_api_bot_status()["running"] is False
+
+    def test_bot_process_matcher_ignores_pgrep_commands(self):
+        from okx_paper_bot.dashboard import _is_bot_run_cmd
+
+        assert _is_bot_run_cmd("/venv/bin/python3 -m okx_paper_bot.cli run")
+        assert _is_bot_run_cmd("/venv/bin/okx-paper-bot run")
+        assert not _is_bot_run_cmd("pgrep -af okx_paper_bot.cli.* run")
+        assert not _is_bot_run_cmd("uv run --group dev python - <<'PY' okx_paper_bot.cli.* run")
 
 
 # ── HTTP integration tests ───────────────────────────────────────────────
