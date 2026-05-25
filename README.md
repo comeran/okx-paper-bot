@@ -1,86 +1,97 @@
-# OKX Paper Bot
+# OKX Quant Workbench
 
-一个用于练习的 OKX 模拟盘量化交易项目骨架。当前实现：
+基于 OKX 的多策略实验、事件回测、模拟盘和实盘预留量化工作台。
 
-- OKX demo/simulated exchange factory
-- 支持从环境变量读取 OKX API 配置
-- 行情抓取：从 exchange 拉取 OHLCV 收盘价
-- MA / RSI / Bollinger / MACD 策略：buy / sell / hold
-- 风控下单金额与仓位比例限制
-- 持久化模拟账户，每个策略实例独立账户状态
-- SQLite 交易日志（审计流水，WAL + 索引）
-- FastAPI dashboard，保留静态 vanilla JS 看板
-- `TradingBot.run_once_from_exchange()`：从行情到交易的一次完整执行
-- `TradingBot.on_prices()`：直接用收盘价序列做回测/单步执行
+> 仅用于研究与模拟验证，不构成投资建议。实盘下单默认锁定。
 
-> 仅用于学习和模拟盘验证，不构成投资建议。
+## 当前能力
+
+- SQLite 首版存储：策略模板、策略实例、K 线缓存、实验批次、回测摘要、资金曲线、成交和审计事件。
+- SQLAlchemy 数据访问层，`DATABASE_URL` 可切换到 MySQL，凭据只放 `.env` 或部署环境变量。
+- Alembic migration 骨架。
+- 预置策略：MA、RSI、MACD、布林带、突破、网格。
+- K 线事件回测：只消费 completed candle，信号在 candle close 生成，下一根 K 线执行。
+- 实验系统：参数网格、批量回测、排行榜、候选晋级状态。
+- OKX 适配预留：`paper`、`okx_demo`、`okx_live`，Demo 自动使用 `x-simulated-trading: 1`。
+- 实盘硬门禁：环境开关、策略级开关、确认短语全部通过才允许真实下单。
+- React/Vite 工作台：总览、数据中心、实验室、策略实例、回测对比、网格控制台、成交、设置。
 
 ## 配置
 
-可用 `.env` 或环境变量：
+`.env` 支持：
 
-- `OKX_API_KEY`
-- `OKX_API_SECRET`
-- `OKX_API_PASSWORD`
-- `OKX_DEMO=1|0`
-- `OKX_SYMBOL`
-- `OKX_TIMEFRAME`
-- `FAST_WINDOW`
-- `SLOW_WINDOW`
-- `INITIAL_BALANCE_USDT`
-- `ORDER_USDT`
-- `MAX_POSITION_FRACTION`
-- `ALLOW_PYRAMIDING=1|0`
-- `DB_PATH`
+```bash
+DATABASE_URL=sqlite:///data/okx_quant.sqlite3
+DASHBOARD_HOST=127.0.0.1
+DASHBOARD_PORT=8080
 
-多策略实例通过 `strategies.json` 配置。每个实例必须显式设置 `equity > 0`；`equity=0` 会在 dashboard 的 `/api/validation` 中显示为阻塞项，机器人不会按隐式全额资金启动。
+OKX_API_KEY=
+OKX_API_SECRET=
+OKX_API_PASSWORD=
 
-## 运行测试
+ALLOW_LIVE_TRADING=0
+LIVE_CONFIRM_PHRASE=ENABLE_LIVE_TRADING
+```
+
+MySQL 可选连接示例：
+
+```bash
+DATABASE_URL=mysql+pymysql://okx:<password>@182.92.200.23:3000/<db_name>
+```
+
+不要把真实密码写入 tracked 文件。
+
+## 后端
+
+```bash
+uv run okx-paper-bot init-db
+uv run okx-paper-bot seed-sample --count 360
+uv run okx-paper-bot backtest --strategy ma_crossover --params '{"fast":5,"slow":20}'
+uv run okx-paper-bot dashboard --host 127.0.0.1 --port 8080
+```
+
+关键 API：
+
+- `GET /api/health`
+- `GET /api/dashboard`
+- `GET /api/strategies`
+- `GET/POST/PATCH /api/instances`
+- `POST /api/instances/{id}/status`
+- `GET /api/data/summary`
+- `POST /api/candles/seed`
+- `POST /api/candles/sync`
+- `POST /api/backtests/run`
+- `POST /api/experiments`
+- `GET /api/runs`
+- `GET /api/runs/{id}`
+- `GET /api/trades`
+- `POST /api/runs/{id}/promote`
+- `POST /api/live/validate`
+- `POST /api/settings/credentials`
+- `POST /api/settings/live`
+
+## 前端
+
+开发模式：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+生产构建：
+
+```bash
+cd frontend
+npm run build
+```
+
+构建后的 `frontend/dist` 会由 FastAPI Dashboard 自动服务。
+
+## 测试
 
 ```bash
 uv run --group dev pytest -q
+cd frontend && npm run build
 ```
-
-## 运行一次模拟交易
-
-```bash
-uv run okx-paper-bot once
-```
-
-默认会：
-1. 读取环境变量或 `.env`
-2. 创建 OKX demo exchange（没装 `ccxt` 时自动降级为本地 FakeExchange）
-3. 拉取最近一段 K 线收盘价
-4. 根据均线信号决定是否交易
-5. 更新对应实例的 `data/account_<实例名>.json`
-6. 把成交审计写入 `data/trades.sqlite3`
-
-## 启动 Dashboard
-
-```bash
-uv run okx-paper-bot dashboard --host 0.0.0.0 --port 8080
-```
-
-关键接口：
-
-- `/api/health`：服务健康检查
-- `/api/validation`：策略/账户/API 配置检查
-- `/api/dashboard_v4`：主看板聚合数据
-- `/api/config`：非敏感配置读取/保存
-- `/api/instances`：策略实例读取/保存
-- `/api/control`、`/api/start_bot`、`/api/run_once`：操作中心接口，写入 `data/dashboard_audit.jsonl`
-
-## 关键接口
-
-- `create_okx_exchange(config)`：创建 OKX demo / fallback exchange
-- `fetch_close_prices(exchange, symbol, timeframe, limit)`：读取 OHLCV 收盘价
-- `TradingBot.on_prices(closes)`：直接用收盘价执行一次信号判断
-- `TradingBot.run_once_from_exchange(exchange)`：从行情源执行一次完整交易循环
-
-## 后续接 OKX 实盘/模拟盘行情
-
-1. 安装依赖：`python -m pip install -e .`
-2. 在 OKX 创建 API Key，并开启模拟盘权限。
-3. 设置 `.env` 或环境变量。
-4. 使用 `create_okx_exchange(BotConfig.from_env())` 创建 exchange。
-5. 拉取 OHLCV 收盘价后调用 `TradingBot.run_once_from_exchange(exchange)`。

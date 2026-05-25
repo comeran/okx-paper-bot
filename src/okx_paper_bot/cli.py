@@ -1,243 +1,93 @@
-"""CLI 入口 - run / once / backtest / stats / dashboard。"""
+"""Command line entrypoint for the rebuilt OKX quant workbench."""
 from __future__ import annotations
 
 import argparse
-import sys
+import json
 
-from okx_paper_bot.config import BotConfig
+import uvicorn
+
+from okx_paper_bot.api import create_app
+from okx_paper_bot.config import AppSettings
+from okx_paper_bot.experiments import ExperimentService, ExperimentSpec
+from okx_paper_bot.market import MarketDataService
+from okx_paper_bot.persistence.db import create_database
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="OKX Paper Trading Bot")
+    parser = argparse.ArgumentParser(prog="okx-paper-bot")
     sub = parser.add_subparsers(dest="command")
 
-    # run
-    run_p = sub.add_parser("run", help="持续运行交易机器人")
-    run_p.add_argument("--symbol", type=str)
-    run_p.add_argument("--symbols", type=str, help="多交易对 (逗号分隔)")
-    run_p.add_argument("--timeframe", type=str)
-    run_p.add_argument("--strategy", choices=["ma_crossover", "rsi", "bollinger", "macd"])
-    run_p.add_argument("--stop-loss", type=float)
-    run_p.add_argument("--take-profit", type=float)
-    run_p.add_argument("--trailing-stop", type=float)
-    run_p.add_argument("--fee", type=float)
-    run_p.add_argument("--slippage", type=float)
-    run_p.add_argument("--tp1", type=float, help="第一档止盈 (0.05=5%%)")
-    run_p.add_argument("--tp1-frac", type=float, help="第一档平仓比例 (0.5=一半)")
-    run_p.add_argument("--tp2", type=float, help="第二档止盈")
-    run_p.add_argument("--tp2-frac", type=float, help="第二档平仓比例")
-    run_p.add_argument("--allow-pyramiding", action="store_true", help="已有持仓时允许继续加仓")
-    run_p.add_argument("--interval", type=int)
-    run_p.add_argument("--live", action="store_true", help="实盘模式 (需要确认)")
+    sub.add_parser("init-db", help="Create database schema and seed strategy templates")
 
-    # backtest
-    bt_p = sub.add_parser("backtest", help="回测策略")
-    bt_p.add_argument("--symbol", default="BTC/USDT")
-    bt_p.add_argument("--timeframe", default="1h")
-    bt_p.add_argument("--days", type=int, default=30)
-    bt_p.add_argument("--fast", type=int, default=5)
-    bt_p.add_argument("--slow", type=int, default=20)
-    bt_p.add_argument("--balance", type=float, default=10000)
-    bt_p.add_argument("--order-usdt", type=float, default=500)
-    bt_p.add_argument("--stop-loss", type=float, default=0.05)
-    bt_p.add_argument("--take-profit", type=float, default=0.10)
-    bt_p.add_argument("--trailing-stop", type=float, default=0.0)
-    bt_p.add_argument("--detail", action="store_true")
+    seed = sub.add_parser("seed-sample", help="Seed deterministic sample candles")
+    seed.add_argument("--market-type", default="spot")
+    seed.add_argument("--symbol", default="BTC/USDT")
+    seed.add_argument("--timeframe", default="1h")
+    seed.add_argument("--count", type=int, default=360)
 
-    # stats
-    stats_p = sub.add_parser("stats", help="查看收益统计")
-    stats_p.add_argument("--symbol", default="BTC/USDT")
+    backtest = sub.add_parser("backtest", help="Run a single backtest")
+    backtest.add_argument("--strategy", default="ma_crossover")
+    backtest.add_argument("--params", default='{"fast":5,"slow":20}')
+    backtest.add_argument("--market-type", default="spot")
+    backtest.add_argument("--symbol", default="BTC/USDT")
+    backtest.add_argument("--timeframe", default="1h")
 
-    # dashboard
-    dash_p = sub.add_parser("dashboard", help="启动 Web Dashboard")
-    dash_p.add_argument("--port", type=int, default=8080)
-    dash_p.add_argument("--host", default="0.0.0.0")
-
-    # once
-    sub.add_parser("once", help="执行一次交易检查")
+    dash = sub.add_parser("dashboard", help="Run FastAPI dashboard")
+    dash.add_argument("--host", default=None)
+    dash.add_argument("--port", type=int, default=None)
 
     args = parser.parse_args()
+    settings = AppSettings.from_env()
+    database = create_database(settings)
 
-    if args.command == "run":
-        _run(args)
-    elif args.command == "backtest":
-        _backtest(args)
-    elif args.command == "stats":
-        _stats(args)
-    elif args.command == "dashboard":
-        _dashboard(args)
-    else:
-        _once()
+    if args.command == "init-db":
+        database.init_schema()
+        print(f"initialized database: {settings.public_database_url}")
+        return
 
-
-def _apply_overrides(config: BotConfig, args) -> BotConfig:
-    overrides = {}
-    mapping = {
-        "symbol": "symbol", "symbols": "symbols", "timeframe": "timeframe",
-        "strategy": "strategy_name", "stop_loss": "stop_loss_pct",
-        "take_profit": "take_profit_pct", "trailing_stop": "trailing_stop_pct",
-        "fee": "fee_pct", "slippage": "slippage_pct",
-        "tp1": "tp1_pct", "tp1_frac": "tp1_fraction",
-        "tp2": "tp2_pct", "tp2_frac": "tp2_fraction",
-        "allow_pyramiding": "allow_pyramiding",
-        "interval": "loop_interval_seconds",
-    }
-    for arg_key, cfg_key in mapping.items():
-        val = getattr(args, arg_key, None)
-        if val is not None:
-            if arg_key == "symbols" and isinstance(val, str):
-                val = tuple(s.strip() for s in val.split(","))
-            overrides[cfg_key] = val
-    if overrides:
-        return config.__class__(**{**config.__dict__, **overrides})
-    return config
-
-
-def _run(args) -> None:
-    from okx_paper_bot.runner import run_loop
-    config = _apply_overrides(BotConfig.from_env(), args)
-
-    if args.live:
-        # 实盘模式安全确认
-        print("⚠️  警告: 你正在切换到实盘模式！")
-        print("   这将使用真实资金进行交易。")
-        print(f"   交易对: {', '.join(config.all_symbols)}")
-        print(f"   初始余额: {config.initial_balance_usdt} USDT")
-        print()
-        confirm = input("输入 YES 确认实盘模式: ")
-        if confirm.strip() != "YES":
-            print("❌ 已取消")
-            return
-        config = config.__class__(**{**config.__dict__, "okx_demo": False})
-        print("✅ 实盘模式已启用")
-        print()
-
-    run_loop(config)
-
-
-def _once() -> None:
-    from okx_paper_bot.bot import TradingBot
-    from okx_paper_bot.exchange import create_okx_market_data_exchange
-    from okx_paper_bot.paper import PaperAccount, account_initial_balance, account_initial_mismatch
-    from okx_paper_bot.store import TradeStore
-    from okx_paper_bot.config import (
-        StrategyInstance,
-        enabled_strategy_instances,
-        load_strategy_instances,
-        validate_strategy_allocation,
-        validate_strategy_instances,
-    )
-    from okx_paper_bot.runner import _build_bot_config
-    config = BotConfig.from_env()
-    exchange = create_okx_market_data_exchange(config)
-    store = TradeStore(config.db_path)
-    configured_instances = load_strategy_instances()
-    if not configured_instances:
-        instances = [StrategyInstance(
-            name="default", enabled=True, strategy=config.strategy_name, symbols=config.all_symbols,
-            timeframe=config.timeframe, fast_window=config.fast_window, slow_window=config.slow_window,
-            rsi_period=config.rsi_period, rsi_buy=config.rsi_buy, rsi_sell=config.rsi_sell,
-            bollinger_period=config.bollinger_period, bollinger_std=config.bollinger_std,
-            stop_loss_pct=config.stop_loss_pct, take_profit_pct=config.take_profit_pct,
-            trailing_stop_pct=config.trailing_stop_pct, tp1_pct=config.tp1_pct,
-            tp1_fraction=config.tp1_fraction, tp2_pct=config.tp2_pct,
-            tp2_fraction=config.tp2_fraction, order_usdt=config.order_usdt,
-            equity=config.initial_balance_usdt, allow_pyramiding=config.allow_pyramiding,
-        )]
-    else:
-        errors = validate_strategy_instances(configured_instances)
-        errors.extend(validate_strategy_allocation(configured_instances, config.initial_balance_usdt))
-        instances = enabled_strategy_instances(configured_instances)
-        if not instances:
-            errors.append("未启用任何策略实例，once 未执行")
-    if not configured_instances:
-        errors = validate_strategy_instances(instances)
-    if errors:
-        raise SystemExit("策略配置无效:\n" + "\n".join(f"- {e}" for e in errors))
-    data_dir = config.db_path.parent
-    for inst in instances:
-        inst_config = _build_bot_config(config, inst)
-        account_file = data_dir / f"account_{inst.name}.json"
-        account = PaperAccount.load(account_file, fallback_balance=inst.equity)
-        if account_file.exists() and account_initial_mismatch(account, inst.equity):
-            raise SystemExit(
-                "策略账户状态无效:\n"
-                f"- {inst.name}: 账户初始资金 {account_initial_balance(account):.2f} USDT "
-                f"与分配权益 {inst.equity:.2f} USDT 不一致，请先重置该策略账户"
+    if args.command == "seed-sample":
+        database.init_schema()
+        with database.session() as session:
+            count = MarketDataService().seed_sample(
+                session,
+                market_type=args.market_type,
+                symbol=args.symbol,
+                timeframe=args.timeframe,
+                count=args.count,
             )
-        bot = TradingBot(inst_config, account, store, instance_name=inst.name)
-        for sym in inst.symbols:
-            result = bot.run_once_from_exchange(exchange, symbol=sym)
-            print(f"[{inst.name}][{sym}] {result}")
-        account.save(account_file)
-        print({"instance": inst.name, "balance_usdt": account.balance_usdt, "positions": account.positions})
+        print(json.dumps({"inserted": count}, ensure_ascii=False))
+        return
 
+    if args.command == "backtest":
+        database.init_schema()
+        params = json.loads(args.params)
+        with database.session() as session:
+            experiment, runs = ExperimentService().create_and_run(
+                session,
+                ExperimentSpec(
+                    name="cli backtest",
+                    strategy_key=args.strategy,
+                    market_type=args.market_type,
+                    symbol=args.symbol,
+                    timeframe=args.timeframe,
+                    fixed_params=params,
+                ),
+            )
+            result = {
+                "experiment_id": experiment.id,
+                "run_id": runs[0].id,
+                "total_return_pct": runs[0].total_return_pct,
+                "max_drawdown_pct": runs[0].max_drawdown_pct,
+                "sharpe": runs[0].sharpe,
+            }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
 
-def _backtest(args) -> None:
-    import time
-    from okx_paper_bot.backtester import fetch_historical_candles, run_backtest
-    from okx_paper_bot.exchange import create_okx_market_data_exchange
-    config = BotConfig(symbol=args.symbol, timeframe=args.timeframe,
-                       fast_window=args.fast, slow_window=args.slow,
-                       initial_balance_usdt=args.balance, order_usdt=args.order_usdt,
-                       stop_loss_pct=args.stop_loss, take_profit_pct=args.take_profit,
-                       trailing_stop_pct=args.trailing_stop)
-    exchange = create_okx_market_data_exchange(config)
-    since_ms = int((time.time() - args.days * 86400) * 1000)
-    print(f"📥 拉取 {args.symbol} 历史 K 线 ({args.timeframe}, {args.days} 天)...")
-    candles = fetch_historical_candles(exchange, args.symbol, args.timeframe, since_ms)
-    print(f"   获取到 {len(candles)} 根 K 线")
-    if len(candles) < config.slow_window + 1:
-        print(f"❌ K 线不足 ({len(candles)} < {config.slow_window + 1})")
-        sys.exit(1)
-    result = run_backtest(candles, config)
-    print()
-    print(result.summary())
-    if args.detail and result.trades:
-        print("\n📋 交易明细:")
-        for i, t in enumerate(result.trades, 1):
-            reason = {"signal": "MA交叉", "stop_loss": "止损", "take_profit": "止盈",
-                      "trailing_stop": "移动止损", "end_of_data": "数据结束"}.get(t.exit_reason, t.exit_reason)
-            print(f"  {i:2d}. {t.entry_time} | {t.entry_price:.2f} → {t.exit_price:.2f} | {t.pnl:+.2f} ({reason})")
+    if args.command == "dashboard":
+        host = args.host or settings.dashboard_host
+        port = args.port or settings.dashboard_port
+        app = create_app(settings=settings, database=database)
+        uvicorn.run(app, host=host, port=port)
+        return
 
-
-def _stats(args) -> None:
-    from okx_paper_bot.exchange import create_okx_market_data_exchange, fetch_close_prices
-    from okx_paper_bot.store import TradeStore
-    from okx_paper_bot.stats import PortfolioStats, EquityTracker
-    config = BotConfig.from_env()
-    exchange = create_okx_market_data_exchange(config)
-    store = TradeStore(config.db_path)
-    trades = store.list_trades()
-    closes = fetch_close_prices(exchange, args.symbol, config.timeframe, limit=2)
-    price = closes[-1] if closes else 0
-    balance = config.initial_balance_usdt
-    positions: dict[str, float] = {}
-    for t in trades:
-        if t["side"] == "buy":
-            balance -= t["amount"] * t["price"]
-            positions[t["symbol"]] = positions.get(t["symbol"], 0) + t["amount"]
-        elif t["side"].startswith("sell") or "tp" in t["side"]:
-            balance += t["amount"] * t["price"]
-            positions[t["symbol"]] = positions.get(t["symbol"], 0) - t["amount"]
-            if positions.get(t["symbol"], 0) <= 1e-12:
-                positions.pop(t["symbol"], None)
-    stats = PortfolioStats(initial_balance=config.initial_balance_usdt, current_balance=balance,
-                           positions=positions, current_prices={args.symbol: price}, trades=trades)
-    print(stats.format_report())
-    equity_file = config.db_path.parent / "equity_history.json"
-    if equity_file.exists():
-        tracker = EquityTracker(equity_file)
-        if len(tracker.history) > 1:
-            print(f"\n📈 权益历史: {len(tracker.history)} 条")
-            print(f"   夏普比率: {tracker.sharpe_ratio():.2f}")
-            print(f"   最大回撤: {tracker.max_drawdown()*100:.2f}%")
-
-
-def _dashboard(args) -> None:
-    from okx_paper_bot.dashboard import run_dashboard
-    run_dashboard(host=args.host, port=args.port)
-
-
-if __name__ == "__main__":
-    main()
+    parser.print_help()

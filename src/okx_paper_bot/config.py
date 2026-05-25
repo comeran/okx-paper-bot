@@ -1,255 +1,104 @@
-"""Bot configuration - all parameters from .env or CLI overrides."""
+"""Application settings with secret-safe public views."""
 from __future__ import annotations
 
-import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
 
-@dataclass
-class StrategyInstance:
-    """A single strategy instance with its own params and symbols."""
-    name: str = "default"
-    enabled: bool = False  # 只有启用后才会被 bot/run_once 执行
-    strategy: str = "ma_crossover"
-    symbols: list[str] = field(default_factory=lambda: ["BTC/USDT"])
-    timeframe: str = "1h"
-    fast_window: int = 5
-    slow_window: int = 20
-    rsi_period: int = 14
-    rsi_buy: float = 30.0
-    rsi_sell: float = 70.0
-    bollinger_period: int = 20
-    bollinger_std: float = 2.0
-    stop_loss_pct: float = 0.05
-    take_profit_pct: float = 0.10
-    trailing_stop_pct: float = 0.0
-    tp1_pct: float = 0.0
-    tp1_fraction: float = 0.5
-    tp2_pct: float = 0.0
-    tp2_fraction: float = 1.0
-    order_usdt: float = 500.0
-    equity: float = 0.0  # 启用前必须显式分配的权益
-    allow_pyramiding: bool = False  # 已有持仓时是否允许继续加仓
-
-    def strategy_params(self) -> dict:
-        """Return strategy-specific params for get_strategy()."""
-        if self.strategy == "ma_crossover":
-            return {"fast": self.fast_window, "slow": self.slow_window}
-        elif self.strategy == "rsi":
-            return {"period": self.rsi_period, "oversold": self.rsi_buy, "overbought": self.rsi_sell}
-        elif self.strategy == "bollinger":
-            return {"period": self.bollinger_period, "std_dev": self.bollinger_std}
-        elif self.strategy == "macd":
-            return {"fast_period": self.fast_window, "slow_period": self.slow_window, "signal_period": 9}
-        return {}
+DEFAULT_DATABASE_URL = "sqlite:///data/okx_quant.sqlite3"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-STRATEGIES_FILE = "strategies.json"
-
-
-def load_strategy_instances(config_dir: Path | str = Path(".")) -> list[StrategyInstance]:
-    """Load strategy instances from strategies.json. Returns empty list if not found."""
-    path = Path(config_dir) / STRATEGIES_FILE
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        instances = []
-        for item in data.get("instances", []):
-            instances.append(StrategyInstance(
-                name=item.get("name", "default"),
-                enabled=_parse_bool(item.get("enabled"), default=False),
-                strategy=item.get("strategy", "ma_crossover"),
-                symbols=item.get("symbols", ["BTC/USDT"]),
-                timeframe=item.get("timeframe", "1h"),
-                fast_window=int(item.get("fast_window", 5)),
-                slow_window=int(item.get("slow_window", 20)),
-                rsi_period=int(item.get("rsi_period", 14)),
-                rsi_buy=float(item.get("rsi_buy", 30.0)),
-                rsi_sell=float(item.get("rsi_sell", 70.0)),
-                bollinger_period=int(item.get("bollinger_period", 20)),
-                bollinger_std=float(item.get("bollinger_std", 2.0)),
-                stop_loss_pct=float(item.get("stop_loss_pct", 0.05)),
-                take_profit_pct=float(item.get("take_profit_pct", 0.10)),
-                trailing_stop_pct=float(item.get("trailing_stop_pct", 0.0)),
-                tp1_pct=float(item.get("tp1_pct", 0.0)),
-                tp1_fraction=float(item.get("tp1_fraction", 0.5)),
-                tp2_pct=float(item.get("tp2_pct", 0.0)),
-                tp2_fraction=float(item.get("tp2_fraction", 1.0)),
-                order_usdt=float(item.get("order_usdt", 500.0)),
-                equity=float(item.get("equity", 0.0)),
-                allow_pyramiding=_parse_bool(item.get("allow_pyramiding"), default=False),
-            ))
-        return instances
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return []
-
-
-def save_strategy_instances(instances: list[StrategyInstance], config_dir: Path | str = Path(".")) -> None:
-    """Save strategy instances to strategies.json."""
-    path = Path(config_dir) / STRATEGIES_FILE
-    data = {"instances": []}
-    for inst in instances:
-        data["instances"].append({
-            "name": inst.name,
-            "enabled": inst.enabled,
-            "strategy": inst.strategy,
-            "symbols": inst.symbols,
-            "timeframe": inst.timeframe,
-            "fast_window": inst.fast_window,
-            "slow_window": inst.slow_window,
-            "rsi_period": inst.rsi_period,
-            "rsi_buy": inst.rsi_buy,
-            "rsi_sell": inst.rsi_sell,
-            "bollinger_period": inst.bollinger_period,
-            "bollinger_std": inst.bollinger_std,
-            "stop_loss_pct": inst.stop_loss_pct,
-            "take_profit_pct": inst.take_profit_pct,
-            "trailing_stop_pct": inst.trailing_stop_pct,
-            "tp1_pct": inst.tp1_pct,
-            "tp1_fraction": inst.tp1_fraction,
-            "tp2_pct": inst.tp2_pct,
-            "tp2_fraction": inst.tp2_fraction,
-            "order_usdt": inst.order_usdt,
-            "equity": inst.equity,
-            "allow_pyramiding": inst.allow_pyramiding,
-        })
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-
-
-def validate_strategy_instances(instances: list[StrategyInstance], *, require_equity: bool = True) -> list[str]:
-    """Return validation errors for configured strategy instances."""
-    errors: list[str] = []
-    seen: set[str] = set()
-    valid_strategies = {"ma_crossover", "rsi", "bollinger", "macd"}
-    for idx, inst in enumerate(instances, 1):
-        label = inst.name or f"#{idx}"
-        if not inst.name.strip():
-            errors.append(f"策略实例 {idx} 缺少名称")
-        elif inst.name in seen:
-            errors.append(f"策略实例名称重复: {inst.name}")
-        seen.add(inst.name)
-        if inst.strategy not in valid_strategies:
-            errors.append(f"{label}: 未知策略 {inst.strategy}")
-        if not inst.symbols or any(not s.strip() for s in inst.symbols):
-            errors.append(f"{label}: symbols 不能为空")
-        if require_equity and inst.enabled and inst.equity <= 0:
-            errors.append(f"{label}: 分配权益(USDT) 必须大于 0")
-        if inst.fast_window <= 0 or inst.slow_window <= 0 or inst.fast_window >= inst.slow_window:
-            errors.append(f"{label}: 需要 0 < fast_window < slow_window")
-        if inst.rsi_period <= 1:
-            errors.append(f"{label}: rsi_period 必须大于 1")
-        if inst.bollinger_period <= 1 or inst.bollinger_std <= 0:
-            errors.append(f"{label}: bollinger 参数无效")
-        if inst.order_usdt <= 0:
-            errors.append(f"{label}: order_usdt 必须大于 0")
-    return errors
-
-
-def enabled_strategy_instances(instances: list[StrategyInstance]) -> list[StrategyInstance]:
-    """Return instances that are allowed to run."""
-    return [inst for inst in instances if inst.enabled]
-
-
-def validate_strategy_allocation(instances: list[StrategyInstance], initial_balance: float) -> list[str]:
-    """Validate enabled strategy equity against configured initial balance."""
-    errors: list[str] = []
-    if initial_balance <= 0:
-        return ["初始资金必须大于 0"]
-    total = sum(inst.equity for inst in instances if inst.enabled and inst.equity > 0)
-    if total > initial_balance + 1e-9:
-        errors.append(
-            f"启用策略分配权益合计 {total:.2f} USDT 超过初始资金 {initial_balance:.2f} USDT"
-        )
-    return errors
-
-
-@dataclass(frozen=True)
-class BotConfig:
-    symbol: str = "BTC/USDT"
-    symbols: tuple[str, ...] = ()
-    timeframe: str = "1m"
-    okx_demo: bool = True
-    strategy_name: str = "ma_crossover"
-    fast_window: int = 5
-    slow_window: int = 20
-    rsi_period: int = 14
-    rsi_buy: float = 30.0
-    rsi_sell: float = 70.0
-    bollinger_period: int = 20
-    bollinger_std: float = 2.0
-    initial_balance_usdt: float = 1_000.0
-    order_usdt: float = 100.0
-    max_position_fraction: float = 0.25
-    fee_pct: float = 0.001
-    slippage_pct: float = 0.0005
-    db_path: Path = Path("data/trades.sqlite3")
-    api_key: str | None = None
-    secret: str | None = None
-    password: str | None = None
-    stop_loss_pct: float = 0.05
-    take_profit_pct: float = 0.10
-    trailing_stop_pct: float = 0.0
-    # 部分止盈
-    tp1_pct: float = 0.0       # 第一档止盈触发点 (0.05 = 5%)
-    tp1_fraction: float = 0.5  # 第一档平仓比例 (0.5 = 平一半)
-    tp2_pct: float = 0.0       # 第二档止盈触发点
-    tp2_fraction: float = 1.0  # 第二档平仓比例 (1.0 = 全平)
-    allow_pyramiding: bool = False
-    notify_file: Path = Path("data/notifications.log")
-    loop_interval_seconds: int = 60
-
-    @property
-    def all_symbols(self) -> list[str]:
-        return list(self.symbols) if self.symbols else [self.symbol]
-
-    @classmethod
-    def from_env(cls) -> "BotConfig":
-        load_dotenv()
-        raw = os.getenv("OKX_SYMBOLS", "")
-        symbols = tuple(s.strip() for s in raw.split(",") if s.strip()) if raw else ()
-        return cls(
-            symbol=os.getenv("OKX_SYMBOL", cls.symbol),
-            symbols=symbols,
-            timeframe=os.getenv("OKX_TIMEFRAME", cls.timeframe),
-            okx_demo=_parse_bool(os.getenv("OKX_DEMO"), default=True),
-            strategy_name=os.getenv("STRATEGY", cls.strategy_name),
-            fast_window=int(os.getenv("FAST_WINDOW", cls.fast_window)),
-            slow_window=int(os.getenv("SLOW_WINDOW", cls.slow_window)),
-            rsi_period=int(os.getenv("RSI_PERIOD", cls.rsi_period)),
-            rsi_buy=float(os.getenv("RSI_BUY", cls.rsi_buy)),
-            rsi_sell=float(os.getenv("RSI_SELL", cls.rsi_sell)),
-            bollinger_period=int(os.getenv("BOLLINGER_PERIOD", cls.bollinger_period)),
-            bollinger_std=float(os.getenv("BOLLINGER_STD", cls.bollinger_std)),
-            initial_balance_usdt=float(os.getenv("INITIAL_BALANCE_USDT", cls.initial_balance_usdt)),
-            order_usdt=float(os.getenv("ORDER_USDT", cls.order_usdt)),
-            max_position_fraction=float(os.getenv("MAX_POSITION_FRACTION", cls.max_position_fraction)),
-            fee_pct=float(os.getenv("FEE_PCT", cls.fee_pct)),
-            slippage_pct=float(os.getenv("SLIPPAGE_PCT", cls.slippage_pct)),
-            db_path=Path(os.getenv("DB_PATH", str(cls.db_path))),
-            api_key=os.getenv("OKX_API_KEY"),
-            secret=os.getenv("OKX_API_SECRET"),
-            password=os.getenv("OKX_API_PASSWORD"),
-            stop_loss_pct=float(os.getenv("STOP_LOSS_PCT", cls.stop_loss_pct)),
-            take_profit_pct=float(os.getenv("TAKE_PROFIT_PCT", cls.take_profit_pct)),
-            trailing_stop_pct=float(os.getenv("TRAILING_STOP_PCT", cls.trailing_stop_pct)),
-            tp1_pct=float(os.getenv("TP1_PCT", cls.tp1_pct)),
-            tp1_fraction=float(os.getenv("TP1_FRACTION", cls.tp1_fraction)),
-            tp2_pct=float(os.getenv("TP2_PCT", cls.tp2_pct)),
-            tp2_fraction=float(os.getenv("TP2_FRACTION", cls.tp2_fraction)),
-            allow_pyramiding=_parse_bool(os.getenv("ALLOW_PYRAMIDING"), default=cls.allow_pyramiding),
-            notify_file=Path(os.getenv("NOTIFY_FILE", str(cls.notify_file))),
-            loop_interval_seconds=int(os.getenv("LOOP_INTERVAL_SECONDS", cls.loop_interval_seconds)),
-        )
-
-
-def _parse_bool(value: str | None, default: bool = False) -> bool:
+def parse_bool(value: str | bool | None, default: bool = False) -> bool:
     if value is None:
         return default
     if isinstance(value, bool):
         return value
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def mask_url_secret(database_url: str) -> str:
+    """Return a database URL safe for logs and API responses."""
+    try:
+        parts = urlsplit(database_url)
+    except ValueError:
+        return "<invalid database url>"
+    if not parts.password:
+        return database_url
+    username = parts.username or ""
+    hostname = parts.hostname or ""
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"{username}:***@{hostname}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def resolve_database_url(database_url: str) -> str:
+    if not database_url.startswith("sqlite:///"):
+        return database_url
+    path = database_url.replace("sqlite:///", "", 1)
+    if not path or path == ":memory:" or path.startswith("file:"):
+        return database_url
+    db_path = Path(path)
+    if not db_path.is_absolute():
+        db_path = (PROJECT_ROOT / db_path).resolve()
+    return f"sqlite:///{db_path}"
+
+
+@dataclass(frozen=True)
+class AppSettings:
+    database_url: str = DEFAULT_DATABASE_URL
+    data_dir: Path = Path("data")
+    dashboard_host: str = "127.0.0.1"
+    dashboard_port: int = 8080
+    okx_api_key: str | None = None
+    okx_api_secret: str | None = None
+    okx_api_password: str | None = None
+    allow_live_trading: bool = False
+    live_confirm_phrase: str = "ENABLE_LIVE_TRADING"
+    default_fee_rate: float = 0.001
+    default_slippage_rate: float = 0.0005
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "database_url", resolve_database_url(self.database_url))
+
+    @classmethod
+    def from_env(cls) -> "AppSettings":
+        load_dotenv()
+        return cls(
+            database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
+            data_dir=Path(os.getenv("DATA_DIR", "data")),
+            dashboard_host=os.getenv("DASHBOARD_HOST", "127.0.0.1"),
+            dashboard_port=int(os.getenv("DASHBOARD_PORT", "8080")),
+            # Credentials are loaded from database only, not from .env
+            allow_live_trading=parse_bool(os.getenv("ALLOW_LIVE_TRADING"), default=False),
+            live_confirm_phrase=os.getenv("LIVE_CONFIRM_PHRASE", "ENABLE_LIVE_TRADING"),
+            default_fee_rate=float(os.getenv("FEE_RATE", "0.001")),
+            default_slippage_rate=float(os.getenv("SLIPPAGE_RATE", "0.0005")),
+        )
+
+    @property
+    def is_mysql(self) -> bool:
+        return self.database_url.startswith(("mysql://", "mysql+pymysql://"))
+
+    @property
+    def public_database_url(self) -> str:
+        return mask_url_secret(self.database_url)
+
+    def public_dict(self) -> dict:
+        return {
+            "database_url": self.public_database_url,
+            "database_kind": "mysql" if self.is_mysql else "sqlite",
+            "dashboard_host": self.dashboard_host,
+            "dashboard_port": self.dashboard_port,
+            "okx_credentials_configured": all(
+                [self.okx_api_key, self.okx_api_secret, self.okx_api_password]
+            ),
+            "allow_live_trading": self.allow_live_trading,
+            "live_confirm_phrase_configured": bool(self.live_confirm_phrase),
+            "default_fee_rate": self.default_fee_rate,
+            "default_slippage_rate": self.default_slippage_rate,
+        }
