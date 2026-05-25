@@ -254,6 +254,96 @@ class GridStrategy(SignalStrategy):
         context.state["filled_levels"] = sorted(filled)
         return intents[:3]
 
+class RsiBollingerStrategy(SignalStrategy):
+    key = "rsi_bollinger"
+    name = "RSI + Bollinger Combo"
+    description = "Buy when RSI oversold AND price near lower Bollinger band. Sell when RSI overbought OR price above upper band."
+    param_schema = {
+        "rsi_period": {"type": "int", "default": 14, "min": 5, "max": 40, "step": 1},
+        "oversold": {"type": "float", "default": 30.0, "min": 10.0, "max": 45.0, "step": 1.0},
+        "overbought": {"type": "float", "default": 70.0, "min": 55.0, "max": 90.0, "step": 1.0},
+        "bb_period": {"type": "int", "default": 20, "min": 5, "max": 60, "step": 1},
+        "bb_std": {"type": "float", "default": 2.0, "min": 0.5, "max": 3.5, "step": 0.1},
+    }
+
+    def signal(self, candles):
+        values = closes(candles)
+        rsi_period = int(self.params.get("rsi_period", 14))
+        bb_period = int(self.params.get("bb_period", 20))
+        required = max(rsi_period + 1, bb_period)
+        if len(values) < required:
+            return "hold"
+        rsi_val = rsi(values, rsi_period)
+        oversold = float(self.params.get("oversold", 30.0))
+        overbought = float(self.params.get("overbought", 70.0))
+        window = values[-bb_period:]
+        mean = sum(window) / bb_period
+        variance = sum((v - mean) ** 2 for v in window) / bb_period
+        band = variance**0.5 * float(self.params.get("bb_std", 2.0))
+        if rsi_val <= oversold and values[-1] <= mean - band * 0.8:
+            return "buy"
+        if rsi_val >= overbought or values[-1] >= mean + band:
+            return "sell"
+        return "hold"
+
+
+class MomentumStrategy(SignalStrategy):
+    key = "momentum"
+    name = "EMA Momentum"
+    description = "EMA crossover with RSI filter. Buy on golden cross with RSI confirmation, sell on death cross or RSI overbought."
+    param_schema = {
+        "fast_ema": {"type": "int", "default": 9, "min": 3, "max": 30, "step": 1},
+        "slow_ema": {"type": "int", "default": 21, "min": 10, "max": 60, "step": 1},
+        "rsi_period": {"type": "int", "default": 14, "min": 5, "max": 30, "step": 1},
+        "rsi_exit": {"type": "float", "default": 75.0, "min": 60.0, "max": 90.0, "step": 1.0},
+    }
+
+    def signal(self, candles):
+        values = closes(candles)
+        fast_p = int(self.params.get("fast_ema", 9))
+        slow_p = int(self.params.get("slow_ema", 21))
+        rsi_p = int(self.params.get("rsi_period", 14))
+        required = max(slow_p + 2, rsi_p + 2)
+        if len(values) < required:
+            return "hold"
+        fast_ema_line = ema_series(values, fast_p)
+        slow_ema_line = ema_series(values, slow_p)
+        rsi_val = rsi(values, rsi_p)
+        rsi_exit = float(self.params.get("rsi_exit", 75.0))
+        if fast_ema_line[-2] <= slow_ema_line[-2] and fast_ema_line[-1] > slow_ema_line[-1] and rsi_val > 40:
+            return "buy"
+        if (fast_ema_line[-2] >= slow_ema_line[-2] and fast_ema_line[-1] < slow_ema_line[-1]) or rsi_val >= rsi_exit:
+            return "sell"
+        return "hold"
+
+
+class TripleMAStrategy(SignalStrategy):
+    key = "triple_ma"
+    name = "Triple MA"
+    description = "Three MAs for trend confirmation. Buy when short > medium > long with golden cross. Sell on short death cross below medium."
+    param_schema = {
+        "short": {"type": "int", "default": 5, "min": 3, "max": 15, "step": 1},
+        "medium": {"type": "int", "default": 13, "min": 8, "max": 30, "step": 1},
+        "long_ma": {"type": "int", "default": 34, "min": 20, "max": 80, "step": 1},
+    }
+
+    def signal(self, candles):
+        values = closes(candles)
+        s = int(self.params.get("short", 5))
+        m = int(self.params.get("medium", 13))
+        l = int(self.params.get("long_ma", 34))
+        if s >= m or m >= l or len(values) < l + 1:
+            return "hold"
+        s_now = sma(values, s)
+        m_now = sma(values, m)
+        l_now = sma(values, l)
+        s_prev = sum(values[-s-1:-1]) / s
+        m_prev = sum(values[-m-1:-1]) / m
+        if s_prev <= m_prev and s_now > m_now and m_now > l_now:
+            return "buy"
+        if s_prev >= m_prev and s_now < m_now:
+            return "sell"
+        return "hold"
 
 REGISTRY: dict[str, type[SignalStrategy]] = {
     cls.key: cls
@@ -264,6 +354,43 @@ REGISTRY: dict[str, type[SignalStrategy]] = {
         BollingerStrategy,
         BreakoutStrategy,
         GridStrategy,
+        RsiBollingerStrategy,
+        MomentumStrategy,
+        TripleMAStrategy,
+    ]
+}
+
+
+def create_strategy(key: str, params: dict[str, Any] | None = None) -> SignalStrategy:
+    if key not in REGISTRY:
+        raise ValueError(f"unknown strategy: {key}")
+    return REGISTRY[key](**(params or {}))
+
+
+def strategy_templates() -> list[dict[str, Any]]:
+    return [
+        {
+            "key": cls.key,
+            "name": cls.name,
+            "description": cls.description,
+            "param_schema": cls.param_schema,
+        }
+        for cls in REGISTRY.values()
+    ]
+
+
+REGISTRY: dict[str, type[SignalStrategy]] = {
+    cls.key: cls
+    for cls in [
+        MACrossoverStrategy,
+        RSIStrategy,
+        MACDStrategy,
+        BollingerStrategy,
+        BreakoutStrategy,
+        GridStrategy,
+        RsiBollingerStrategy,
+        MomentumStrategy,
+        TripleMAStrategy,
     ]
 }
 
